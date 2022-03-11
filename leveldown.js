@@ -1,13 +1,13 @@
 'use strict'
 
+// TODO: rename file
+
 const duplexify = require('duplexify')
-const { AbstractLevelDOWN, AbstractIterator } = require('abstract-leveldown')
+const { AbstractLevel, AbstractIterator } = require('abstract-level')
 const eos = require('end-of-stream')
-const ids = require('numeric-id-map')
 const lpstream = require('length-prefixed-stream')
-const reachdown = require('reachdown')
+const ModuleError = require('module-error')
 const messages = require('./messages')
-const matchdown = require('./matchdown')
 
 const ENCODERS = [
   messages.Get,
@@ -25,38 +25,47 @@ const DECODERS = [
   messages.GetManyCallback
 ]
 
-module.exports = Multilevel
+const kExplicitClose = Symbol('explicitClose')
+const kAbortRequests = Symbol('abortRequests')
+const kEnded = Symbol('kEnded')
+const kRemote = Symbol('remote')
+const MAX_UINT = Math.pow(2, 32) - 1
 
-function Multilevel (opts) {
-  if (!(this instanceof Multilevel)) return new Multilevel(opts)
+class Multilevel extends AbstractLevel {
+  constructor (options) {
+    const { retry, _remote, ...forward } = options || {}
 
-  AbstractLevelDOWN.call(this, {
-    bufferKeys: true,
-    snapshots: !opts.retry,
-    permanence: true,
-    seek: false,
-    clear: true,
-    getMany: true,
-    createIfMissing: false,
-    errorIfExists: false
-  })
+    super({
+      encodings: { buffer: true },
+      snapshots: !retry,
+      permanence: true,
+      seek: false,
+      createIfMissing: false,
+      errorIfExists: false
+    }, forward)
 
-  if (!opts) opts = {}
-  this._iterators = ids()
-  this._requests = ids()
-  this._retry = !!opts.retry
-  this._onflush = opts.onflush || noop
-  this._encode = lpstream.encode()
-  this._streaming = null
-  this._ref = null
-  this._db = null
+    // TODO: use symbols
+    this._iterators = new IdMap()
+    this._requests = new IdMap()
+    this._retry = !!retry
+    this._encode = lpstream.encode()
+    this[kRemote] = _remote || null
+    this._streaming = null
+    this._ref = null
+    this._db = null
+    this[kExplicitClose] = false
+  }
+
+  get type () {
+    return 'multileveldown'
+  }
 }
 
-Object.setPrototypeOf(Multilevel.prototype, AbstractLevelDOWN.prototype)
+exports.Multilevel = Multilevel
 
-Multilevel.prototype.type = 'multileveldown'
+// TODO: move to class
 
-Multilevel.prototype.createRpcStream = function (opts, proxy) {
+Multilevel.prototype.connect = function (opts, proxy) {
   if (this._streaming) throw new Error('Only one rpc stream can be active')
   if (!opts) opts = {}
   this._ref = opts.ref || null
@@ -95,6 +104,7 @@ Multilevel.prototype.createRpcStream = function (opts, proxy) {
     self._flushMaybe()
   })
 
+  // TODO: replace length-prefixed-stream with an already-duplex stream
   if (!proxy) proxy = duplexify()
   proxy.setWritable(decode)
   proxy.setReadable(encode)
@@ -107,20 +117,18 @@ Multilevel.prototype.createRpcStream = function (opts, proxy) {
     self._encode = lpstream.encode()
 
     if (!self._retry) {
-      self._clearRequests(false)
+      self[kAbortRequests]('Connection to leader lost', 'LEVEL_CONNECTION_LOST')
       self._flushMaybe()
       return
     }
 
-    for (let i = 0; i < self._requests.length; i++) {
-      const req = self._requests.get(i)
-      if (!req) continue
+    for (const req of self._requests.values()) {
       self._write(req)
     }
 
-    for (let j = 0; j < self._iterators.length; j++) {
-      const ite = self._iterators.get(j)
-      if (!ite) continue
+    for (const ite of self._iterators.values()) {
+      // TODO: it seems we don't clone the options anywhere. Also, why reset at all?
+      // if (ite.options === ite.iterator._options) throw new Error('bug?')
       ite.options = ite.iterator._options
       self._write(ite)
     }
@@ -130,66 +138,81 @@ Multilevel.prototype.createRpcStream = function (opts, proxy) {
     const req = self._iterators.get(res.id)
     if (!req) return
     req.pending.push(res)
-    if (req.callback) req.iterator.next(req.callback)
+    if (req.callback) req.iterator._next(req.callback)
   }
 
   function oncallback (res) {
     const req = self._requests.remove(res.id)
-    if (req) req.callback(decodeError(res.error), decodeValue(res.value, req.valueAsBuffer))
+    if (!req) return
+    if (res.error) req.callback(new ModuleError('Could not get value', { code: res.error }))
+    else req.callback(null, normalizeValue(res.value))
   }
 
   function ongetmanycallback (res) {
     const req = self._requests.remove(res.id)
-    if (req) req.callback(decodeError(res.error), res.values.map(v => decodeValue(v.value, req.valueAsBuffer)))
+    if (!req) return
+    if (res.error) req.callback(new ModuleError('Could not get values', { code: res.error }))
+    else req.callback(null, res.values.map(v => normalizeValue(v.value)))
   }
 }
 
-Multilevel.prototype.forward = function (down) {
-  this._db = reachdown(down, matchdown, false)
+// Alias for backwards compat with multileveldown and originally multilevel
+Multilevel.prototype.createRpcStream = function (...args) {
+  return this.connect(...args)
+}
+
+Multilevel.prototype.forward = function (db2) {
+  // We forward calls to the private API of db2, so it must support 'buffer'
+  for (const enc of ['keyEncoding', 'valueEncoding']) {
+    if (db2[enc]('buffer').name !== 'buffer') {
+      throw new ModuleError(`Database must support non-transcoded 'buffer' ${enc}`, {
+        code: 'LEVEL_ENCODING_NOT_SUPPORTED'
+      })
+    }
+  }
+
+  this._db = db2
 }
 
 Multilevel.prototype.isFlushed = function () {
-  return !this._requests.length && !this._iterators.length
+  return !this._requests.size && !this._iterators.size
 }
 
+// TODO: use symbols
 Multilevel.prototype._flushMaybe = function () {
   if (!this.isFlushed()) return
-  this._onflush()
+  this.emit('flush')
   unref(this._ref)
 }
 
-Multilevel.prototype._clearRequests = function (closing) {
-  for (let i = 0; i < this._requests.length; i++) {
-    const req = this._requests.remove(i)
-    if (req) req.callback(new Error('Connection to leader lost'))
+Multilevel.prototype[kAbortRequests] = function (msg, code) {
+  for (const req of this._requests.clear()) {
+    req.callback(new ModuleError(msg, { code }))
   }
 
-  for (let j = 0; j < this._iterators.length; j++) {
-    const ite = this._iterators.remove(j)
-    if (ite) {
-      if (ite.callback && !closing) ite.callback(new Error('Connection to leader lost'))
-      ite.iterator.end()
+  for (const ite of this._iterators.clear()) {
+    // Cancel in-flight operation if any
+    const callback = ite.callback
+    ite.callback = null
+
+    if (callback) {
+      callback(new ModuleError(msg, { code }))
     }
+
+    // Note: an in-flight operation would block close()
+    ite.iterator.close(noop)
   }
-}
-
-Multilevel.prototype._serializeKey = function (key) {
-  return Buffer.isBuffer(key) ? key : Buffer.from(String(key))
-}
-
-Multilevel.prototype._serializeValue = function (value) {
-  return Buffer.isBuffer(value) ? value : Buffer.from(String(value))
 }
 
 Multilevel.prototype._get = function (key, opts, cb) {
+  // TODO: this and other methods assume _db state matches our state
   if (this._db) return this._db._get(key, opts, cb)
 
   const req = {
     tag: 0,
     id: 0,
     key: key,
-    valueAsBuffer: opts.asBuffer,
-    callback: cb || noop
+    callback: cb
   }
 
   req.id = this._requests.add(req)
@@ -203,7 +226,6 @@ Multilevel.prototype._getMany = function (keys, opts, cb) {
     tag: 6,
     id: 0,
     keys: keys,
-    valueAsBuffer: opts.asBuffer,
     callback: cb
   }
 
@@ -219,7 +241,7 @@ Multilevel.prototype._put = function (key, value, opts, cb) {
     id: 0,
     key: key,
     value: value,
-    callback: cb || noop
+    callback: cb
   }
 
   req.id = this._requests.add(req)
@@ -233,7 +255,7 @@ Multilevel.prototype._del = function (key, opts, cb) {
     tag: 2,
     id: 0,
     key: key,
-    callback: cb || noop
+    callback: cb
   }
 
   req.id = this._requests.add(req)
@@ -247,7 +269,7 @@ Multilevel.prototype._batch = function (batch, opts, cb) {
     tag: 3,
     id: 0,
     ops: batch,
-    callback: cb || noop
+    callback: cb
   }
 
   req.id = this._requests.add(req)
@@ -269,7 +291,7 @@ Multilevel.prototype._clear = function (opts, cb) {
 }
 
 Multilevel.prototype._write = function (req) {
-  if (this._requests.length + this._iterators.length === 1) ref(this._ref)
+  if (this._requests.size + this._iterators.size === 1) ref(this._ref)
   const enc = ENCODERS[req.tag]
   const buf = Buffer.allocUnsafe(enc.encodingLength(req) + 1)
   buf[0] = req.tag
@@ -280,70 +302,88 @@ Multilevel.prototype._write = function (req) {
 Multilevel.prototype._close = function (cb) {
   if (this._db) return this._db._close(cb)
 
-  this._clearRequests(true)
+  this[kExplicitClose] = true
+  this[kAbortRequests]('Aborted on database close()', 'LEVEL_DATABASE_NOT_OPEN')
+
   if (this._streaming) {
-    // _streaming: could be a socket and emit 'close' with a
-    // hadError argument.
-    this._streaming.once('close', () => cb())
+    // _streaming could be a socket and emit 'close' with a
+    // hadError argument. Ignore that argument.
+    this._streaming.once('close', () => {
+      this._streaming = null
+      cb()
+    })
     this._streaming.destroy()
   } else {
-    this._nextTick(cb)
+    this.nextTick(cb)
   }
 }
 
-Multilevel.prototype._iterator = function (opts) {
-  if (this._db) return this._db._iterator(opts)
-  return new Iterator(this, opts)
+Multilevel.prototype._open = function (options, cb) {
+  if (this[kRemote]) {
+    // For tests only so does not need error handling
+    this[kExplicitClose] = false
+    const remote = this[kRemote]()
+    remote.pipe(this.connect()).pipe(remote)
+  } else if (this[kExplicitClose]) {
+    throw new ModuleError('Cannot reopen many-level database after close()', {
+      code: 'LEVEL_NOT_SUPPORTED'
+    })
+  }
+
+  this.nextTick(cb)
+}
+
+Multilevel.prototype._iterator = function (options) {
+  if (this._db) {
+    return this._db._iterator(options)
+  }
+
+  return new Iterator(this, options)
 }
 
 function noop () {}
 
-function Iterator (db, opts) {
-  AbstractIterator.call(this, db)
+class Iterator extends AbstractIterator {
+  constructor (db, options) {
+    // Avoid spread operator because of https://bugs.chromium.org/p/chromium/issues/detail?id=1204540
+    super(db, Object.assign({}, options, { abortOnClose: true }))
 
-  this._keyAsBuffer = opts.keyAsBuffer
-  this._valueAsBuffer = opts.valueAsBuffer
-  this._options = opts
+    this._options = options
 
-  const req = {
-    tag: 4,
-    id: 0,
-    batch: 32,
-    pending: [],
-    iterator: this,
-    options: opts,
-    callback: null
+    const req = {
+      tag: 4,
+      id: 0,
+      batch: 32,
+      pending: [],
+      iterator: this,
+      options: options,
+      callback: null
+    }
+
+    req.id = this.db._iterators.add(req)
+
+    // TODO: use symbols
+    this._read = 0
+    this._ack = Math.floor(req.batch / 2)
+    this._req = req
+    this[kEnded] = false
+    this.db._write(req)
   }
-
-  req.id = this.db._iterators.add(req)
-
-  this._read = 0
-  this._ack = Math.floor(req.batch / 2)
-  this._req = req
-  this.db._write(req)
 }
 
-Object.setPrototypeOf(Iterator.prototype, AbstractIterator.prototype)
+// TODO: move to class
 
-// TODO: implement _next() instead
-Iterator.prototype.next = function (callback) {
-  // In callback mode, we return `this`
-  let ret = this
-
-  if (callback === undefined) {
-    ret = new Promise(function (resolve, reject) {
-      callback = function (err, key, value) {
-        if (err) reject(err)
-        else if (key === undefined && value === undefined) resolve()
-        else resolve([key, value])
-      }
-    })
+// TODO: implement optimized `nextv()`
+Iterator.prototype._next = function (callback) {
+  if (this[kEnded]) {
+    return this.nextTick(callback)
   }
 
   this._req.callback = null
 
   if (this._req.pending.length) {
     this._read++
+
     if (this._read >= this._ack) {
       this._read = 0
       this._req.options = null
@@ -353,44 +393,40 @@ Iterator.prototype.next = function (callback) {
     const next = this._req.pending.shift()
 
     if (next.error) {
-      callback(decodeError(next.error))
-      return ret
+      return this.nextTick(callback, new ModuleError('Could not read entry', {
+        code: next.error
+      }))
     }
 
     if (!next.key && !next.value) {
-      callback()
-      return ret
+      // https://github.com/Level/abstract-level/issues/19
+      this[kEnded] = true
+      return this.nextTick(callback)
     }
 
     this._options.gt = next.key
+    this._options.gte = null
     if (this._options.limit > 0) this._options.limit--
 
-    const key = decodeValue(next.key, this._keyAsBuffer)
-    const val = decodeValue(next.value, this._valueAsBuffer)
+    const key = normalizeValue(next.key)
+    const val = normalizeValue(next.value)
 
-    callback(undefined, key, val)
-    return ret
+    return this.nextTick(callback, undefined, key, val)
   }
 
   this._req.callback = callback
-  return ret
 }
 
-Iterator.prototype._end = function (cb) {
+Iterator.prototype._close = function (cb) {
   this._req.batch = 0
   this.db._write(this._req)
   this.db._iterators.remove(this._req.id)
   this.db._flushMaybe()
-  this._nextTick(cb)
+  this.nextTick(cb)
 }
 
-function decodeError (err) {
-  return err ? new Error(err) : null
-}
-
-function decodeValue (val, asBuffer) {
-  if (!val) return undefined
-  return asBuffer ? val : val.toString()
+function normalizeValue (value) {
+  return value === null ? undefined : value
 }
 
 function ref (r) {
@@ -399,4 +435,42 @@ function ref (r) {
 
 function unref (r) {
   if (r && r.unref) r.unref()
+}
+
+class IdMap {
+  constructor () {
+    this._map = new Map()
+    this._seq = 0
+  }
+
+  get size () {
+    return this._map.size
+  }
+
+  add (item) {
+    if (this._seq >= MAX_UINT) this._seq = 0
+    this._map.set(++this._seq, item)
+    return this._seq
+  }
+
+  get (id) {
+    return this._map.get(id)
+  }
+
+  remove (id) {
+    const item = this._map.get(id)
+    if (item !== undefined) this._map.delete(id)
+    return item
+  }
+
+  values () {
+    return this._map.values()
+  }
+
+  clear () {
+    const values = Array.from(this._map.values())
+    this._map.clear()
+    this._seq = 0
+    return values
+  }
 }

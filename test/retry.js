@@ -1,12 +1,13 @@
+'use strict'
+
 const tape = require('tape')
-const memdown = require('memdown')
-const levelup = require('levelup')
+const { MemoryLevel } = require('memory-level')
+const { EntryStream } = require('level-read-stream')
+const { pipeline } = require('readable-stream')
 const multileveldown = require('../')
-const encode = require('encoding-down')
-const factory = require('level-compose')(memdown, encode, levelup)
 
 tape('retry get', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const stream = multileveldown.server(db)
   const client = multileveldown.client({ retry: true })
 
@@ -17,12 +18,12 @@ tape('retry get', function (t) {
       t.end()
     })
 
-    stream.pipe(client.createRpcStream()).pipe(stream)
+    stream.pipe(client.connect()).pipe(stream)
   })
 })
 
 tape('no retry get', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const stream = multileveldown.server(db)
   const client = multileveldown.client({ retry: false })
 
@@ -33,12 +34,12 @@ tape('no retry get', function (t) {
         t.end()
       })
 
-      const rpc = client.createRpcStream()
+      const rpc = client.connect()
       stream.pipe(rpc).pipe(stream)
       rpc.destroy()
 
       setTimeout(function () {
-        const rpc = client.createRpcStream()
+        const rpc = client.connect()
         stream.pipe(rpc).pipe(stream)
       }, 100)
     })
@@ -46,7 +47,7 @@ tape('no retry get', function (t) {
 })
 
 tape('retry get', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const stream = multileveldown.server(db)
   const client = multileveldown.client({ retry: true })
 
@@ -58,20 +59,82 @@ tape('retry get', function (t) {
         t.end()
       })
 
-      const rpc = client.createRpcStream()
+      const rpc = client.connect()
       stream.pipe(rpc).pipe(stream)
       rpc.destroy()
 
       setTimeout(function () {
-        const rpc = client.createRpcStream()
+        const rpc = client.connect()
         stream.pipe(rpc).pipe(stream)
       }, 100)
     })
   })
 })
 
+tape('retry iterator with gte option', async function (t) {
+  t.plan(3)
+
+  const db = new MemoryLevel()
+  const entryCount = 20
+  const client = multileveldown.client({
+    retry: true,
+    keyEncoding: 'buffer',
+    valueEncoding: 'buffer'
+  })
+
+  let done = false
+  let attempts = 0
+  let n = 0
+
+  await db.batch(new Array(entryCount).fill(null).map((_, i) => {
+    return { type: 'put', key: Buffer.from([i]), value: Buffer.from([i]) }
+  }))
+
+  // Don't test deferredOpen
+  await client.open()
+
+  // Artificially slow down iterators
+  const original = db._iterator
+  db._iterator = function (options) {
+    const it = original.call(this, options)
+    const next = it._next
+
+    it._next = function (cb) {
+      if (n++ > entryCount * 10) throw new Error('Infinite loop')
+
+      next.call(this, (...args) => {
+        setTimeout(cb.bind(null, ...args), 10)
+      })
+    }
+
+    return it
+  }
+
+  // (Re)connect every 50ms
+  ;(function connect () {
+    if (done) return
+
+    attempts++
+
+    const remote = multileveldown.server(db)
+    const local = client.connect()
+
+    // TODO: calls back too soon if you destroy remote instead of local,
+    // because duplexify does not satisfy node's willEmitClose() check
+    pipeline(remote, local, remote, connect)
+    setTimeout(local.destroy.bind(local), 50)
+  })()
+
+  const entries = await client.iterator({ gte: Buffer.from([1]) }).all()
+  done = true
+
+  t.is(entries.length, entryCount - 1)
+  t.ok(entries.every((e, index) => e[0][0] === index + 1))
+  t.ok(attempts > 1, `reconnected ${attempts} times`)
+})
+
 tape('retry read stream', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const client = multileveldown.client({ retry: true })
 
   client.open(function () {
@@ -88,7 +151,7 @@ tape('retry read stream', function (t) {
       key: 'hola',
       value: 'mundo'
     }], function () {
-      const rs = client.createReadStream()
+      const rs = new EntryStream(client)
       const expected = [{
         key: 'hej',
         value: 'verden'
@@ -114,10 +177,8 @@ tape('retry read stream', function (t) {
 
       const connect = function () {
         stream = multileveldown.server(db)
-        clientStream = client.createRpcStream()
-
+        clientStream = client.connect()
         stream.pipe(clientStream).pipe(stream)
-        clientStream.on('close', connect)
       }
 
       connect()
@@ -126,7 +187,7 @@ tape('retry read stream', function (t) {
 })
 
 tape('retry read stream and limit', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const client = multileveldown.client({ retry: true })
 
   client.open(function () {
@@ -143,7 +204,7 @@ tape('retry read stream and limit', function (t) {
       key: 'hola',
       value: 'mundo'
     }], function () {
-      const rs = client.createReadStream({ limit: 2 })
+      const rs = new EntryStream(client, { limit: 2 })
       const expected = [{
         key: 'hej',
         value: 'verden'
@@ -166,10 +227,8 @@ tape('retry read stream and limit', function (t) {
 
       const connect = function () {
         stream = multileveldown.server(db)
-        clientStream = client.createRpcStream()
-
+        clientStream = client.connect()
         stream.pipe(clientStream).pipe(stream)
-        clientStream.on('close', connect)
       }
 
       connect()

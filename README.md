@@ -1,4 +1,4 @@
-# multileveldown
+# many-level
 
 > [`multilevel`](https://github.com/juliangruber/multilevel) implemented using leveldowns with seamless retry support
 
@@ -13,23 +13,22 @@
 
 ## Usage
 
-Similar to [`multilevel`](https://github.com/juliangruber/multilevel) you can use this to share a `levelup` database across multiple processes over a stream. In addition `multileveldown` supports seamless retry so you can reconnect to a server without your read streams / puts failing etc.
+Similar to [`multilevel`](https://github.com/juliangruber/multilevel) you can use this to share an `abstract-level` database across multiple processes over a stream. In addition `multileveldown` supports seamless retry so you can reconnect to a server without your read streams / puts failing etc.
 
 First create a server:
 
 ```js
 const multileveldown = require('multileveldown')
+const { pipeline } = require('readable-stream')
 const level = require('level')
 const net = require('net')
 
-const db = level('db')
+const db = level('./db')
 
-const server = net.createServer(function (sock) {
-  sock.on('error', function () {
-    sock.destroy()
+const server = net.createServer(function (socket) {
+  pipeline(socket, multileveldown.server(db), socket, () => {
+    // Optionally do something when socket has disconnected
   })
-
-  sock.pipe(multileveldown.server(db)).pipe(sock)
 })
 
 server.listen(9000)
@@ -39,24 +38,29 @@ Then create some clients:
 
 ```js
 const multileveldown = require('multileveldown')
+const { pipeline } = require('readable-stream')
 const net = require('net')
 
 const db = multileveldown.client()
+const socket = net.connect(9000)
 
-const sock = net.connect(9000)
-sock.pipe(db.connect()).pipe(sock)
-
-db.put('hello', 'world', function () {
-  db.get('hello', console.log)
+pipeline(socket, db.connect(), socket, () => {
+  // Optionally do something when socket has disconnected
 })
+
+await db.put('hello', 'world')
+console.log(await db.get('hello'))
 ```
+
+Encoding options are supported as usual.
 
 ## Reconnect
 
-To setup reconnect in your client simply set `retry: true` and reconnect to your server when the connection fails:
+To setup reconnect in your client set the `retry` option to `true` and reconnect to your server when the connection fails:
 
 ```js
 const multileveldown = require('multileveldown')
+const { pipeline } = require('readable-stream')
 const net = require('net')
 
 const db = multileveldown.client({
@@ -64,19 +68,11 @@ const db = multileveldown.client({
 })
 
 const connect = function () {
-  const sock = net.connect(9000)
-  const remote = db.connect()
+  const socket = net.connect(9000)
 
-  sock.on('error', function () {
-    sock.destroy()
-  })
-
-  sock.on('close', function () {
-    remote.destroy()
+  pipeline(socket, db.connect(), socket, () => {
     setTimeout(connect, 1000) // reconnect after 1s
   })
-
-  sock.pipe(remote).pipe(sock)
 }
 
 connect()
@@ -88,7 +84,7 @@ stream you are missing. Please note that this might not guarantee leveldb snapsh
 
 ## API
 
-#### `multileveldown.server(db, [options])`
+#### `stream = multileveldown.server(db, [options])`
 
 Returns a new duplex server stream that you should connect with a client. Options include:
 
@@ -103,14 +99,13 @@ Returns a new duplex server stream that you should connect with a client. Option
 
 #### `clientDb = multileveldown.client([options])`
 
-Creates a new client levelup that you can connect to a server.
-Options are forwarded to the levelup constructor.
+Creates a new `abstract-level` database that you should connect with a server. Options are forwarded to the `abstract-level` constructor.
 
-#### `clientDb.connect()`
+#### `stream = clientDb.connect()`
 
-Returns a new duplex client stream that you should connect with a server stream
+Returns a new duplex client stream that you should connect with a server stream.
 
-#### `clientDb.createRpcStream()`
+#### `stream = clientDb.createRpcStream()`
 
 Just an alias to `.connect` for [`multilevel`](https://github.com/juliangruber/multilevel) API compatibility.
 

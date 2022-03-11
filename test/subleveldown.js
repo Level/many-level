@@ -1,84 +1,87 @@
+'use strict'
+
+// TODO: rename file
+
 const tape = require('tape')
-const memdown = require('memdown')
+const { MemoryLevel } = require('memory-level')
+const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
-const levelup = require('levelup')
-const encode = require('encoding-down')
-const factory = require('level-compose')(memdown, encode, levelup)
-const sub = require('subleveldown')
 const multileveldown = require('../')
 
-tape('subleveldown on deferred multileveldown client', function (t) {
+tape('sublevel on deferred multileveldown client', function (t) {
   t.plan(5)
 
-  const db = factory()
+  const db = new MemoryLevel()
   const stream = multileveldown.server(db)
   const client = multileveldown.client()
-  const sub1 = sub(client, 'test', { valueEncoding: 'json' })
-  const sub2 = sub(client, 'test')
+  const sub1 = client.sublevel('test', { valueEncoding: 'json' })
+  const sub2 = client.sublevel('test')
 
-  t.is(client.isOpen(), false)
-  stream.pipe(client.createRpcStream()).pipe(stream)
+  t.is(client.status, 'opening')
+  stream.pipe(client.connect()).pipe(stream)
 
   sub1.put('hello', { test: 'world' }, function (err) {
     t.error(err, 'no err')
 
-    sub1.createReadStream().pipe(concat(function (entries) {
+    // TODO: use iterator.all() instead
+    new EntryStream(sub1).pipe(concat(function (entries) {
       t.same(entries, [{ key: 'hello', value: { test: 'world' } }])
     }))
 
-    sub2.createReadStream().pipe(concat(function (entries) {
+    new EntryStream(sub2).pipe(concat(function (entries) {
       t.same(entries, [{ key: 'hello', value: '{"test":"world"}' }])
     }))
 
-    db.createReadStream().pipe(concat(function (entries) {
+    new EntryStream(db).pipe(concat(function (entries) {
       t.same(entries, [{ key: '!test!hello', value: '{"test":"world"}' }])
     }))
   })
 })
 
-tape('subleveldown on non-deferred multileveldown client', function (t) {
+tape('sublevel on non-deferred multileveldown client', function (t) {
   t.plan(5)
 
-  const db = factory()
+  const db = new MemoryLevel()
   const stream = multileveldown.server(db)
   const client = multileveldown.client()
 
-  stream.pipe(client.createRpcStream()).pipe(stream)
+  stream.pipe(client.connect()).pipe(stream)
 
   client.once('open', function () {
-    t.is(client.isOpen(), true)
+    t.is(client.status, 'open')
 
-    const sub1 = sub(client, 'test', { valueEncoding: 'json' })
-    const sub2 = sub(client, 'test')
+    const sub1 = client.sublevel('test', { valueEncoding: 'json' })
+    const sub2 = client.sublevel('test')
 
     sub1.put('hello', { test: 'world' }, function (err) {
       t.error(err, 'no err')
 
-      sub1.createReadStream().pipe(concat(function (entries) {
+      // TODO: use iterator.all() instead
+      new EntryStream(sub1).pipe(concat(function (entries) {
         t.same(entries, [{ key: 'hello', value: { test: 'world' } }])
       }))
 
-      sub2.createReadStream().pipe(concat(function (entries) {
+      new EntryStream(sub2).pipe(concat(function (entries) {
         t.same(entries, [{ key: 'hello', value: '{"test":"world"}' }])
       }))
 
-      db.createReadStream().pipe(concat(function (entries) {
+      new EntryStream(db).pipe(concat(function (entries) {
         t.same(entries, [{ key: '!test!hello', value: '{"test":"world"}' }])
       }))
     })
   })
 })
 
-tape('multileveldown server on deferred subleveldown', function (t) {
+tape('multileveldown server on deferred sublevel', function (t) {
   t.plan(4)
 
-  const db = factory()
-  const sub1 = sub(db, 'test1')
-  const sub2 = sub(db, 'test2')
+  const db = new MemoryLevel()
+  const sub1 = db.sublevel('test1')
+  const sub2 = db.sublevel('test2')
   const stream = multileveldown.server(sub1)
   const client = multileveldown.client()
 
-  stream.pipe(client.createRpcStream()).pipe(stream)
+  stream.pipe(client.connect()).pipe(stream)
 
   client.put('from', 'client', function (err) {
     t.error(err, 'no err')
@@ -86,11 +89,12 @@ tape('multileveldown server on deferred subleveldown', function (t) {
     sub2.put('from', 'server', function (err) {
       t.error(err, 'no err')
 
-      client.createReadStream().pipe(concat(function (entries) {
+      // TODO: use iterator.all() instead
+      new EntryStream(client).pipe(concat(function (entries) {
         t.same(entries, [{ key: 'from', value: 'client' }])
       }))
 
-      db.createReadStream().pipe(concat(function (entries) {
+      new EntryStream(db).pipe(concat(function (entries) {
         t.same(entries, [
           { key: '!test1!from', value: 'client' },
           { key: '!test2!from', value: 'server' }
@@ -100,18 +104,18 @@ tape('multileveldown server on deferred subleveldown', function (t) {
   })
 })
 
-tape('multileveldown server on non-deferred subleveldown', function (t) {
+tape('multileveldown server on non-deferred sublevel', function (t) {
   t.plan(4)
 
-  const db = factory()
-  const sub1 = sub(db, 'test1')
-  const sub2 = sub(db, 'test2')
+  const db = new MemoryLevel()
+  const sub1 = db.sublevel('test1')
+  const sub2 = db.sublevel('test2')
 
   sub1.once('open', function () {
     const stream = multileveldown.server(sub1)
     const client = multileveldown.client()
 
-    stream.pipe(client.createRpcStream()).pipe(stream)
+    stream.pipe(client.connect()).pipe(stream)
 
     client.put('from', 'client', function (err) {
       t.error(err, 'no err')
@@ -119,11 +123,12 @@ tape('multileveldown server on non-deferred subleveldown', function (t) {
       sub2.put('from', 'server', function (err) {
         t.error(err, 'no err')
 
-        client.createReadStream().pipe(concat(function (entries) {
+        // TODO: use iterator.all() instead
+        new EntryStream(client).pipe(concat(function (entries) {
           t.same(entries, [{ key: 'from', value: 'client' }])
         }))
 
-        db.createReadStream().pipe(concat(function (entries) {
+        new EntryStream(db).pipe(concat(function (entries) {
           t.same(entries, [
             { key: '!test1!from', value: 'client' },
             { key: '!test2!from', value: 'server' }
@@ -134,17 +139,17 @@ tape('multileveldown server on non-deferred subleveldown', function (t) {
   })
 })
 
-tape('multileveldown server on nested subleveldown', function (t) {
+tape('multileveldown server on nested sublevel', function (t) {
   t.plan(4)
 
-  const db = factory()
-  const sub1 = sub(db, 'test1')
-  const sub2 = sub(sub1, 'test2')
-  const sub3 = sub(db, 'test3')
+  const db = new MemoryLevel()
+  const sub1 = db.sublevel('test1')
+  const sub2 = sub1.sublevel('test2')
+  const sub3 = db.sublevel('test3')
   const stream = multileveldown.server(sub2)
   const client = multileveldown.client()
 
-  stream.pipe(client.createRpcStream()).pipe(stream)
+  stream.pipe(client.connect()).pipe(stream)
 
   client.put('from', 'client', function (err) {
     t.error(err, 'no err')
@@ -152,11 +157,12 @@ tape('multileveldown server on nested subleveldown', function (t) {
     sub3.put('from', 'server', function (err) {
       t.error(err, 'no err')
 
-      client.createReadStream().pipe(concat(function (entries) {
+      // TODO: use iterator.all() instead
+      new EntryStream(client).pipe(concat(function (entries) {
         t.same(entries, [{ key: 'from', value: 'client' }])
       }))
 
-      db.createReadStream().pipe(concat(function (entries) {
+      new EntryStream(db).pipe(concat(function (entries) {
         t.same(entries, [
           { key: '!test1!!test2!from', value: 'client' },
           { key: '!test3!from', value: 'server' }

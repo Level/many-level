@@ -1,13 +1,14 @@
 'use strict'
 
 const lpstream = require('length-prefixed-stream')
+const ModuleError = require('module-error')
 const eos = require('end-of-stream')
 const duplexify = require('duplexify')
-const reachdown = require('reachdown')
 const messages = require('./messages')
-const matchdown = require('./matchdown')
 
-const rangeOptions = ['gt', 'gte', 'lt', 'lte']
+const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
+const encodingOptions = Object.freeze({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
+const kClosed = Symbol('closed')
 const noop = () => {}
 
 const DECODERS = [
@@ -32,20 +33,20 @@ module.exports = function (db, opts) {
   const predel = opts.predel || function (key, cb) { cb(null) }
   const prebatch = opts.prebatch || function (ops, cb) { cb(null) }
 
-  if (db.isOpen()) ready()
-  else db.open(ready)
+  db.open({ passive: true }, ready)
 
   return stream
 
+  // TODO: handle error
   function ready () {
-    const down = reachdown(db, matchdown, false)
-    const iterators = []
+    const iterators = new Map()
 
     eos(stream, function () {
-      while (iterators.length) {
-        const next = iterators.shift()
-        if (next) next.end()
+      for (const iterator of iterators.values()) {
+        iterator.close()
       }
+
+      iterators.clear()
     })
 
     decode.on('data', function (data) {
@@ -85,7 +86,7 @@ module.exports = function (db, opts) {
     })
 
     function callback (id, err, value) {
-      const msg = { id, error: err && err.message, value }
+      const msg = { id, error: errorCode(err), value }
       const buf = Buffer.allocUnsafe(messages.Callback.encodingLength(msg) + 1)
       buf[0] = 0 // Tag
       messages.Callback.encode(msg, buf, 1)
@@ -93,7 +94,7 @@ module.exports = function (db, opts) {
     }
 
     function getManyCallback (id, err, values) {
-      const msg = { id, error: err && err.message, values }
+      const msg = { id, error: errorCode(err), values }
       const buf = Buffer.allocUnsafe(messages.GetManyCallback.encodingLength(msg) + 1)
       buf[0] = 2 // Tag
       messages.GetManyCallback.encode(msg, buf, 1)
@@ -103,20 +104,20 @@ module.exports = function (db, opts) {
     function onput (req) {
       preput(req.key, req.value, function (err) {
         if (err) return callback(err)
-        down.put(req.key, req.value, function (err) {
+        db.put(req.key, req.value, encodingOptions, function (err) {
           callback(req.id, err, null)
         })
       })
     }
 
     function onget (req) {
-      down.get(req.key, { asBuffer: true }, function (err, value) {
+      db.get(req.key, encodingOptions, function (err, value) {
         callback(req.id, err, value)
       })
     }
 
     function ongetmany (req) {
-      down.getMany(req.keys, { asBuffer: true }, function (err, values) {
+      db.getMany(req.keys, encodingOptions, function (err, values) {
         getManyCallback(req.id, err, values.map(value => ({ value })))
       })
     }
@@ -124,56 +125,61 @@ module.exports = function (db, opts) {
     function ondel (req) {
       predel(req.key, function (err) {
         if (err) return callback(err)
-        down.del(req.key, function (err) {
+        db.del(req.key, encodingOptions, function (err) {
           callback(req.id, err)
         })
       })
     }
 
     function onreadonly (req) {
-      callback(req.id, new Error('Database is readonly'))
+      callback(req.id, new ModuleError('Database is readonly', { code: 'LEVEL_READONLY' }))
     }
 
     function onbatch (req) {
       prebatch(req.ops, function (err) {
         if (err) return callback(err)
 
-        down.batch(req.ops, function (err) {
+        db.batch(req.ops, encodingOptions, function (err) {
           callback(req.id, err)
         })
       })
     }
 
     function oniterator (req) {
-      while (iterators.length < req.id) iterators.push(null)
+      let prev = iterators.get(req.id)
 
-      let prev = iterators[req.id]
-      if (!prev) prev = iterators[req.id] = new Iterator(down, req, encode)
+      if (req.batch) {
+        if (prev === undefined) {
+          prev = new Iterator(db, req, encode)
+          iterators.set(req.id, prev)
+        }
 
-      if (!req.batch) {
-        iterators[req.id] = null
-        prev.end()
-      } else {
         prev.batch = req.batch
         prev.next()
+      } else {
+        // If batch is not set, this is a close signal
+        iterators.delete(req.id)
+        if (prev !== undefined) prev.close()
       }
     }
 
     function onclear (req) {
-      down.clear(cleanRangeOptions(req.options), function (err) {
+      db.clear(cleanRangeOptions(req.options), function (err) {
         callback(req.id, err)
       })
     }
   }
 }
 
-function Iterator (down, req, encode) {
+function Iterator (db, req, encode) {
   this.batch = req.batch || 0
-  this._iterator = down.iterator(cleanRangeOptions(req.options))
+  this._iterator = db.iterator(cleanRangeOptions(req.options))
   this._encode = encode
   this._send = (err, key, value) => {
+    // TODO: send key and value directly (sans protobuf) with
+    // <tag><id><key length><key><value>, avoiding a copy
     this._nexting = false
-    this._data.error = err && err.message
+    this._data.error = errorCode(err)
     this._data.key = key
     this._data.value = value
     this.batch--
@@ -185,7 +191,7 @@ function Iterator (down, req, encode) {
   }
   this._nexting = false
   this._first = true
-  this._ended = false
+  this[kClosed] = false
   this._data = {
     id: req.id,
     error: null,
@@ -195,35 +201,42 @@ function Iterator (down, req, encode) {
 }
 
 Iterator.prototype.next = function () {
-  if (this._nexting || this._ended) return
+  if (this._nexting || this[kClosed]) return
   if (!this._first && (!this.batch || this._data.error || (!this._data.key && !this._data.value))) return
   this._first = false
   this._nexting = true
   this._iterator.next(this._send)
 }
 
-Iterator.prototype.end = function () {
-  if (this._ended) return
-  this._ended = true
-  this._iterator.end(noop)
+Iterator.prototype.close = function () {
+  if (this[kClosed]) return
+  this[kClosed] = true
+  this._iterator.close(noop)
+}
+
+function errorCode (err) {
+  if (err == null) {
+    return undefined
+  } else if (typeof err.code === 'string' && err.code.startsWith('LEVEL_')) {
+    return err.code
+  } else {
+    return 'LEVEL_REMOTE_ERROR'
+  }
 }
 
 function cleanRangeOptions (options) {
-  if (!options) return
-
   const result = {}
 
   for (const k in options) {
     if (!hasOwnProperty.call(options, k)) continue
 
-    if (!isRangeOption(k) || options[k] != null) {
+    if (!rangeOptions.has(k) || options[k] != null) {
       result[k] = options[k]
     }
   }
 
-  return result
-}
+  result.keyEncoding = 'buffer'
+  result.valueEncoding = 'buffer'
 
-function isRangeOption (k) {
-  return rangeOptions.includes(k)
+  return result
 }

@@ -1,13 +1,13 @@
+'use strict'
+
 const tape = require('tape')
-const memdown = require('memdown')
-const levelup = require('levelup')
+const { MemoryLevel } = require('memory-level')
+const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
 const multileveldown = require('../')
-const encode = require('encoding-down')
-const factory = require('level-compose')(memdown, encode, levelup)
 
 tape('two concurrent iterators', function (t) {
-  const db = factory()
+  const db = new MemoryLevel()
   const server = multileveldown.server(db)
   const client = multileveldown.client()
 
@@ -19,8 +19,9 @@ tape('two concurrent iterators', function (t) {
   client.batch(batch, function (err) {
     t.error(err)
 
-    const rs1 = client.createReadStream()
-    const rs2 = client.createReadStream()
+    // TODO: use iterator.all() instead
+    const rs1 = new EntryStream(client)
+    const rs2 = new EntryStream(client)
 
     rs1.pipe(concat(function (list1) {
       t.same(list1.length, 100)
