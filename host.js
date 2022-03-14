@@ -67,8 +67,10 @@ function createRpcStream (db, options, streamOptions) {
 
   return stream
 
-  // TODO: handle error
-  function ready () {
+  function ready (err) {
+    if (stream.destroyed) return
+    if (err) return stream.destroy(err)
+
     const iterators = new Map()
 
     eos(stream, function () {
