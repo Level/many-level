@@ -1,7 +1,7 @@
 {
-  "name": "multileveldown",
-  "version": "5.0.1",
-  "description": "multilevel implemented using leveldowns with reconnect support",
+  "name": "many-level",
+  "version": "0.0.0",
+  "description": "Expose an abstract-level database over the network or other kind of stream",
   "author": "Mathias Buus (@mafintosh)",
   "license": "MIT",
   "main": "index.js",
@@ -47,12 +47,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Level/multileveldown.git"
+    "url": "https://github.com/Level/many-level.git"
   },
   "bugs": {
-    "url": "https://github.com/Level/multileveldown/issues"
+    "url": "https://github.com/Level/many-level/issues"
   },
-  "homepage": "https://github.com/Level/multileveldown",
+  "homepage": "https://github.com/Level/many-level",
   "engines": {
     "node": ">=12"
   },

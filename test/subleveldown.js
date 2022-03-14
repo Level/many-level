@@ -6,14 +6,14 @@ const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
-const multileveldown = require('../')
+const manylevel = require('../')
 
-tape('sublevel on deferred multileveldown client', function (t) {
+tape('sublevel on deferred many-level client', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
   const sub1 = client.sublevel('test', { valueEncoding: 'json' })
   const sub2 = client.sublevel('test')
 
@@ -38,12 +38,12 @@ tape('sublevel on deferred multileveldown client', function (t) {
   })
 })
 
-tape('sublevel on non-deferred multileveldown client', function (t) {
+tape('sublevel on non-deferred many-level client', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -72,14 +72,14 @@ tape('sublevel on non-deferred multileveldown client', function (t) {
   })
 })
 
-tape('multileveldown server on deferred sublevel', function (t) {
+tape('many-level server on deferred sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
   const sub1 = db.sublevel('test1')
   const sub2 = db.sublevel('test2')
-  const stream = multileveldown.server(sub1)
-  const client = multileveldown.client()
+  const stream = manylevel.server(sub1)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -104,7 +104,7 @@ tape('multileveldown server on deferred sublevel', function (t) {
   })
 })
 
-tape('multileveldown server on non-deferred sublevel', function (t) {
+tape('many-level server on non-deferred sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
@@ -112,8 +112,8 @@ tape('multileveldown server on non-deferred sublevel', function (t) {
   const sub2 = db.sublevel('test2')
 
   sub1.once('open', function () {
-    const stream = multileveldown.server(sub1)
-    const client = multileveldown.client()
+    const stream = manylevel.server(sub1)
+    const client = manylevel.client()
 
     stream.pipe(client.connect()).pipe(stream)
 
@@ -139,15 +139,15 @@ tape('multileveldown server on non-deferred sublevel', function (t) {
   })
 })
 
-tape('multileveldown server on nested sublevel', function (t) {
+tape('many-level server on nested sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
   const sub1 = db.sublevel('test1')
   const sub2 = sub1.sublevel('test2')
   const sub3 = db.sublevel('test3')
-  const stream = multileveldown.server(sub2)
-  const client = multileveldown.client()
+  const stream = manylevel.server(sub2)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 

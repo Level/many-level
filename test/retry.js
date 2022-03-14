@@ -4,12 +4,12 @@ const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const { pipeline } = require('readable-stream')
-const multileveldown = require('../')
+const manylevel = require('../')
 
 tape('retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ retry: true })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ retry: true })
 
   db.put('hello', 'world', function () {
     client.get('hello', function (err, value) {
@@ -24,8 +24,8 @@ tape('retry get', function (t) {
 
 tape('no retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ retry: false })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ retry: false })
 
   client.open(function () {
     db.put('hello', 'world', function () {
@@ -48,8 +48,8 @@ tape('no retry get', function (t) {
 
 tape('retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ retry: true })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ retry: true })
 
   client.open(function () {
     db.put('hello', 'world', function () {
@@ -76,7 +76,7 @@ tape('retry iterator with gte option', async function (t) {
 
   const db = new MemoryLevel()
   const entryCount = 20
-  const client = multileveldown.client({
+  const client = manylevel.client({
     retry: true,
     keyEncoding: 'buffer',
     valueEncoding: 'buffer'
@@ -116,7 +116,7 @@ tape('retry iterator with gte option', async function (t) {
 
     attempts++
 
-    const remote = multileveldown.server(db)
+    const remote = manylevel.server(db)
     const local = client.connect()
 
     // TODO: calls back too soon if you destroy remote instead of local,
@@ -135,7 +135,7 @@ tape('retry iterator with gte option', async function (t) {
 
 tape('retry read stream', function (t) {
   const db = new MemoryLevel()
-  const client = multileveldown.client({ retry: true })
+  const client = manylevel.client({ retry: true })
 
   client.open(function () {
     db.batch([{
@@ -176,7 +176,7 @@ tape('retry read stream', function (t) {
       let clientStream
 
       const connect = function () {
-        stream = multileveldown.server(db)
+        stream = manylevel.server(db)
         clientStream = client.connect()
         stream.pipe(clientStream).pipe(stream)
       }
@@ -188,7 +188,7 @@ tape('retry read stream', function (t) {
 
 tape('retry read stream and limit', function (t) {
   const db = new MemoryLevel()
-  const client = multileveldown.client({ retry: true })
+  const client = manylevel.client({ retry: true })
 
   client.open(function () {
     db.batch([{
@@ -226,7 +226,7 @@ tape('retry read stream and limit', function (t) {
       let clientStream
 
       const connect = function () {
-        stream = multileveldown.server(db)
+        stream = manylevel.server(db)
         clientStream = client.connect()
         stream.pipe(clientStream).pipe(stream)
       }

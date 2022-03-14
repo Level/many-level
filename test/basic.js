@@ -5,14 +5,14 @@ const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const { pipeline } = require('readable-stream')
 const concat = require('concat-stream')
-const multileveldown = require('../')
+const manylevel = require('../')
 
 tape('get', function (t) {
   t.plan(7)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -38,8 +38,8 @@ tape('get', function (t) {
 
 tape('get with valueEncoding: json in constructor', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ valueEncoding: 'json' })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ valueEncoding: 'json' })
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -56,8 +56,8 @@ tape('get with valueEncoding: json in get options', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -78,8 +78,8 @@ tape('get with valueEncoding: json in get options', function (t) {
 
 tape('put', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -97,8 +97,8 @@ tape('put with valueEncoding: json in constructor', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ valueEncoding: 'json' })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ valueEncoding: 'json' })
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -121,8 +121,8 @@ tape('put with valueEncoding: json in put options', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -147,8 +147,8 @@ tape('readonly', async function (t) {
   const db = new MemoryLevel()
   await db.put('hello', 'verden')
 
-  const stream = multileveldown.server(db, { readonly: true })
-  const client = multileveldown.client()
+  const stream = manylevel.server(db, { readonly: true })
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -163,8 +163,8 @@ tape('readonly', async function (t) {
 
 tape('del', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -182,8 +182,8 @@ tape('del', function (t) {
 
 tape('batch', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -203,8 +203,8 @@ tape('batch', function (t) {
 
 tape('read stream', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -222,8 +222,8 @@ tape('read stream', function (t) {
 
 tape('read stream (gt)', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -240,8 +240,8 @@ tape('read stream (gt)', function (t) {
 
 tape('for await...of iterator', function (t) {
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client()
+  const stream = manylevel.server(db)
+  const client = manylevel.client()
 
   stream.pipe(client.connect()).pipe(stream)
 
@@ -262,7 +262,7 @@ tape('for await...of iterator', function (t) {
 tape('close with pending request', function (t) {
   t.plan(2)
 
-  const client = multileveldown.client()
+  const client = manylevel.client()
 
   client.put('hello', 'world', function (err) {
     t.is(err && err.code, 'LEVEL_DATABASE_NOT_OPEN')
@@ -279,8 +279,8 @@ tape('disconnect with pending request', function (t) {
   t.plan(3)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ retry: false })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ retry: false })
 
   pipeline(stream, client.connect(), stream, () => {})
 
@@ -307,7 +307,7 @@ tape('disconnect with pending request', function (t) {
 tape('close with pending iterator', function (t) {
   t.plan(3)
 
-  const client = multileveldown.client()
+  const client = manylevel.client()
 
   client.open(function (err) {
     t.ifError(err)
@@ -330,8 +330,8 @@ tape('disconnect with pending iterator', function (t) {
   t.plan(3)
 
   const db = new MemoryLevel()
-  const stream = multileveldown.server(db)
-  const client = multileveldown.client({ retry: false })
+  const stream = manylevel.server(db)
+  const client = manylevel.client({ retry: false })
 
   pipeline(stream, client.connect(), stream, () => {})
 

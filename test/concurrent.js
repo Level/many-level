@@ -4,12 +4,12 @@ const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
-const multileveldown = require('../')
+const manylevel = require('../')
 
 tape('two concurrent iterators', function (t) {
   const db = new MemoryLevel()
-  const server = multileveldown.server(db)
-  const client = multileveldown.client()
+  const server = manylevel.server(db)
+  const client = manylevel.client()
 
   server.pipe(client.connect()).pipe(server)
 
@@ -34,10 +34,10 @@ tape('two concurrent iterators', function (t) {
 
 tape('two concurrent clients', function (t) {
   const db = new MemoryLevel()
-  const server1 = multileveldown.server(db)
-  const server2 = multileveldown.server(db)
-  const client1 = multileveldown.client()
-  const client2 = multileveldown.client()
+  const server1 = manylevel.server(db)
+  const server2 = manylevel.server(db)
+  const client1 = manylevel.client()
+  const client2 = manylevel.client()
 
   server1.pipe(client1.connect()).pipe(server1)
   server2.pipe(client2.connect()).pipe(server2)

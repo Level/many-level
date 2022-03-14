@@ -2,7 +2,7 @@
 
 const test = require('tape')
 const { MemoryLevel } = require('memory-level')
-const multileveldown = require('..')
+const manylevel = require('..')
 const suite = require('abstract-level/test')
 
 suite({
@@ -12,8 +12,8 @@ suite({
     const db = new MemoryLevel()
 
     // Temporary solution to allow test suite to reopen a db
-    const remote = () => multileveldown.server(db)
+    const remote = () => manylevel.server(db)
 
-    return multileveldown.client({ ...options, _remote: remote })
+    return manylevel.client({ ...options, _remote: remote })
   }
 })

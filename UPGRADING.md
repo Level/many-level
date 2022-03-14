@@ -49,12 +49,6 @@ All together, here are the errors to be expected from `many-level`:
 - Semi-private properties like `_ended` and `_clearRequests()` have been replaced with symbols and are no longer accessible
 - Drops support of Node 10
 
-## 5.0.0
+---
 
-This release drops support of legacy runtime environments ([Level/community#98](https://github.com/Level/community/issues/98)):
-
-- Internet Explorer 11
-- Safari 9-11
-- Stock Android browser (AOSP).
-
-In browsers, the [`immediate`](https://github.com/calvinmetcalf/immediate) shim for `process.nextTick()` has been replaced with the smaller [`queue-microtask`](https://github.com/feross/queue-microtask), except in streams.
+_For earlier releases, before `many-level` was forked from `multileveldown` (v5.0.1), please see [the upgrade guide of `multileveldown`](https://github.com/Level/multileveldown/blob/HEAD/UPGRADING.md)._
