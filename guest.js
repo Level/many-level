@@ -1,7 +1,5 @@
 'use strict'
 
-// TODO: rename file
-
 const duplexify = require('duplexify')
 const { AbstractLevel, AbstractIterator } = require('abstract-level')
 const eos = require('end-of-stream')
@@ -31,7 +29,7 @@ const kEnded = Symbol('kEnded')
 const kRemote = Symbol('remote')
 const MAX_UINT = Math.pow(2, 32) - 1
 
-class ManyLevelClient extends AbstractLevel {
+class ManyLevelGuest extends AbstractLevel {
   constructor (options) {
     const { retry, _remote, ...forward } = options || {}
 
@@ -61,11 +59,11 @@ class ManyLevelClient extends AbstractLevel {
   }
 }
 
-exports.ManyLevelClient = ManyLevelClient
+exports.ManyLevelGuest = ManyLevelGuest
 
 // TODO: move to class
 
-ManyLevelClient.prototype.connect = function (opts, proxy) {
+ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
   if (this._streaming) throw new Error('Only one rpc stream can be active')
   if (!opts) opts = {}
   this._ref = opts.ref || null
@@ -156,12 +154,12 @@ ManyLevelClient.prototype.connect = function (opts, proxy) {
   }
 }
 
-// Alias for backwards compat with multileveldown and originally multilevel
-ManyLevelClient.prototype.createRpcStream = function (...args) {
-  return this.connect(...args)
+// Alias for backwards compat with multileveldown
+ManyLevelGuest.prototype.connect = function (...args) {
+  return this.createRpcStream(...args)
 }
 
-ManyLevelClient.prototype.forward = function (db2) {
+ManyLevelGuest.prototype.forward = function (db2) {
   // We forward calls to the private API of db2, so it must support 'buffer'
   for (const enc of ['keyEncoding', 'valueEncoding']) {
     if (db2[enc]('buffer').name !== 'buffer') {
@@ -174,18 +172,18 @@ ManyLevelClient.prototype.forward = function (db2) {
   this._db = db2
 }
 
-ManyLevelClient.prototype.isFlushed = function () {
+ManyLevelGuest.prototype.isFlushed = function () {
   return !this._requests.size && !this._iterators.size
 }
 
 // TODO: use symbols
-ManyLevelClient.prototype._flushMaybe = function () {
+ManyLevelGuest.prototype._flushMaybe = function () {
   if (!this.isFlushed()) return
   this.emit('flush')
   unref(this._ref)
 }
 
-ManyLevelClient.prototype[kAbortRequests] = function (msg, code) {
+ManyLevelGuest.prototype[kAbortRequests] = function (msg, code) {
   for (const req of this._requests.clear()) {
     req.callback(new ModuleError(msg, { code }))
   }
@@ -204,7 +202,7 @@ ManyLevelClient.prototype[kAbortRequests] = function (msg, code) {
   }
 }
 
-ManyLevelClient.prototype._get = function (key, opts, cb) {
+ManyLevelGuest.prototype._get = function (key, opts, cb) {
   // TODO: this and other methods assume _db state matches our state
   if (this._db) return this._db._get(key, opts, cb)
 
@@ -219,7 +217,7 @@ ManyLevelClient.prototype._get = function (key, opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._getMany = function (keys, opts, cb) {
+ManyLevelGuest.prototype._getMany = function (keys, opts, cb) {
   if (this._db) return this._db._getMany(keys, opts, cb)
 
   const req = {
@@ -233,7 +231,7 @@ ManyLevelClient.prototype._getMany = function (keys, opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._put = function (key, value, opts, cb) {
+ManyLevelGuest.prototype._put = function (key, value, opts, cb) {
   if (this._db) return this._db._put(key, value, opts, cb)
 
   const req = {
@@ -248,7 +246,7 @@ ManyLevelClient.prototype._put = function (key, value, opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._del = function (key, opts, cb) {
+ManyLevelGuest.prototype._del = function (key, opts, cb) {
   if (this._db) return this._db._del(key, opts, cb)
 
   const req = {
@@ -262,7 +260,7 @@ ManyLevelClient.prototype._del = function (key, opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._batch = function (batch, opts, cb) {
+ManyLevelGuest.prototype._batch = function (batch, opts, cb) {
   if (this._db) return this._db._batch(batch, opts, cb)
 
   const req = {
@@ -276,7 +274,7 @@ ManyLevelClient.prototype._batch = function (batch, opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._clear = function (opts, cb) {
+ManyLevelGuest.prototype._clear = function (opts, cb) {
   if (this._db) return this._db._clear(opts, cb)
 
   const req = {
@@ -290,7 +288,7 @@ ManyLevelClient.prototype._clear = function (opts, cb) {
   this._write(req)
 }
 
-ManyLevelClient.prototype._write = function (req) {
+ManyLevelGuest.prototype._write = function (req) {
   if (this._requests.size + this._iterators.size === 1) ref(this._ref)
   const enc = ENCODERS[req.tag]
   const buf = Buffer.allocUnsafe(enc.encodingLength(req) + 1)
@@ -299,7 +297,7 @@ ManyLevelClient.prototype._write = function (req) {
   this._encode.write(buf)
 }
 
-ManyLevelClient.prototype._close = function (cb) {
+ManyLevelGuest.prototype._close = function (cb) {
   if (this._db) return this._db._close(cb)
 
   this[kExplicitClose] = true
@@ -318,7 +316,7 @@ ManyLevelClient.prototype._close = function (cb) {
   }
 }
 
-ManyLevelClient.prototype._open = function (options, cb) {
+ManyLevelGuest.prototype._open = function (options, cb) {
   if (this[kRemote]) {
     // For tests only so does not need error handling
     this[kExplicitClose] = false
@@ -333,7 +331,7 @@ ManyLevelClient.prototype._open = function (options, cb) {
   this.nextTick(cb)
 }
 
-ManyLevelClient.prototype._iterator = function (options) {
+ManyLevelGuest.prototype._iterator = function (options) {
   if (this._db) {
     return this._db._iterator(options)
   }
@@ -343,6 +341,7 @@ ManyLevelClient.prototype._iterator = function (options) {
 
 function noop () {}
 
+// TODO: support seek
 class Iterator extends AbstractIterator {
   constructor (db, options) {
     // Avoid spread operator because of https://bugs.chromium.org/p/chromium/issues/detail?id=1204540

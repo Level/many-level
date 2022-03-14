@@ -9,6 +9,8 @@ const messages = require('./messages')
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
 const encodingOptions = Object.freeze({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
 const kClosed = Symbol('closed')
+const kDb = Symbol('db')
+const kOptions = Symbol('options')
 const noop = () => {}
 
 const DECODERS = [
@@ -21,17 +23,35 @@ const DECODERS = [
   messages.GetMany
 ]
 
-module.exports = function (db, opts) {
-  if (!opts) opts = {}
+// TODO: make use of db.supports manifest
+class ManyLevelHost {
+  constructor (db, options) {
+    this[kDb] = db
+    this[kOptions] = { ...options }
+    this[kOptions].readonly = !!this[kOptions].readonly
+    this[kOptions].preput = this[kOptions].preput || function (key, val, cb) { cb(null) }
+    this[kOptions].predel = this[kOptions].predel || function (key, cb) { cb(null) }
+    this[kOptions].prebatch = this[kOptions].prebatch || function (ops, cb) { cb(null) }
+  }
 
-  const readonly = !!(opts.readonly)
+  createRpcStream (streamOptions) {
+    return createRpcStream(this[kDb], this[kOptions], streamOptions)
+  }
+}
+
+exports.ManyLevelHost = ManyLevelHost
+
+// TODO: support events
+// TODO: support stream options (highWaterMark)
+function createRpcStream (db, options, streamOptions) {
+  const readonly = options.readonly
   const decode = lpstream.decode()
   const encode = lpstream.encode()
   const stream = duplexify(decode, encode)
 
-  const preput = opts.preput || function (key, val, cb) { cb(null) }
-  const predel = opts.predel || function (key, cb) { cb(null) }
-  const prebatch = opts.prebatch || function (ops, cb) { cb(null) }
+  const preput = options.preput
+  const predel = options.predel
+  const prebatch = options.prebatch
 
   db.open({ passive: true }, ready)
 

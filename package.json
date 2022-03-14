@@ -14,12 +14,10 @@
     "prepublishOnly": "npm run dependency-check"
   },
   "files": [
-    "client.js",
+    "guest.js",
+    "host.js",
     "index.js",
-    "leveldown.js",
-    "matchdown.js",
     "messages.js",
-    "server.js",
     "streams.js",
     "CHANGELOG.md",
     "UPGRADING.md"

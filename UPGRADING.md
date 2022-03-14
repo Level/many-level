@@ -6,6 +6,37 @@ This document describes breaking changes and how to upgrade. For a complete list
 
 _WIP notes_
 
+### Changes to initialization
+
+We started using classes, which means using `new` is now required. The server/client roles are now called host/guest. If you previously did:
+
+```js
+// Server
+const multileveldown = require('multileveldown')
+const stream = multileveldown.server(db, options)
+
+// Client
+const multileveldown = require('multileveldown')
+const db = multileveldown.client(encodingOptions)
+const stream = db.connect(options)
+```
+
+You should now do:
+
+```js
+// Host
+const { ManyLevelHost } = require('many-level')
+const host = new ManyLevelHost(db, options)
+const stream = host.createRpcStream()
+
+// Guest
+const { ManyLevelGuest } = require('many-level')
+const db = new ManyLevelGuest(encodingOptions)
+const stream = db.createRpcStream(options)
+```
+
+Arguments and options are the same. The previous exports (`server` and `client`) are still available but log a deprecation warning.
+
 ### Error codes
 
 Like `abstract-level`, `many-level` started using [error codes](https://github.com/Level/abstract-level#errors). The specific error messages that `multileveldown` had did not change, but it is a breaking change in the sense that going forward, the semver contract will be on codes instead of messages (which, in other words, may change at any time). If you previously did:
@@ -34,7 +65,7 @@ try {
 
 Previously, the `Connection to leader lost` error was also used upon a `db.close()` (in addition to upon loss of connection). Closing the database while it has pending operations now results in a `LEVEL_DATABASE_NOT_OPEN` error on those operations. This is the same code that `abstract-level` (and therefore `many-level`) uses on operations made _after_ a `db.close()`.
 
-The error codes are also used in communication between server and client. Server-side error messages stay server-side; it now only sends codes to the client. For unexpected errors, the code received by a client will be `LEVEL_REMOTE_ERROR`.
+The error codes are also used in communication between host and guest, instead of exposing arbitrary error messages. If the host encounters an unexpected error, the code received by a guest will be `LEVEL_REMOTE_ERROR`.
 
 All together, here are the errors to be expected from `many-level`:
 
@@ -42,7 +73,7 @@ All together, here are the errors to be expected from `many-level`:
 |:----------------------------|:-----------------------------------------------------|
 | `Connection to leader lost` | `LEVEL_CONNECTION_LOST` or `LEVEL_DATABASE_NOT_OPEN` |
 | `Database is readonly`      | `LEVEL_READONLY`                                     |
-| Any other message           | `LEVEL_REMOTE_ERROR`                                 |
+| Any other message           | `LEVEL_REMOTE_ERROR` or an `abstract-level` code     |
 
 ### Other
 

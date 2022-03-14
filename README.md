@@ -17,19 +17,21 @@
 
 Similar to [`multilevel`](https://github.com/juliangruber/multilevel) you can use this to share an `abstract-level` database across multiple processes over a stream. In addition `many-level` supports seamless retry so you can reconnect to a server without your read streams / puts failing etc.
 
-First create a server:
+First create a server (can be anything that supports binary streams):
 
 ```js
-const manylevel = require('many-level')
+const { ManyLevelHost } = require('many-level')
+const { Level } = require('level')
 const { pipeline } = require('readable-stream')
-const level = require('level')
-const net = require('net')
+const { createServer } = require('net')
 
-const db = level('./db')
+const db = new Level('./db')
+const host = new ManyLevelHost(db)
 
-const server = net.createServer(function (socket) {
-  pipeline(socket, manylevel.server(db), socket, () => {
-    // Optionally do something when socket has disconnected
+const server = createServer(function (socket) {
+  // Pipe socket into host stream and vice versa
+  pipeline(socket, host.createRpcStream(), socket, () => {
+    // Disconnected
   })
 })
 
@@ -39,15 +41,16 @@ server.listen(9000)
 Then create some clients:
 
 ```js
-const manylevel = require('many-level')
+const { ManyLevelGuest } = require('many-level')
 const { pipeline } = require('readable-stream')
-const net = require('net')
+const { connect } = require('net')
 
-const db = manylevel.client()
-const socket = net.connect(9000)
+const db = new ManyLevelGuest()
+const socket = connect(9000)
 
-pipeline(socket, db.connect(), socket, () => {
-  // Optionally do something when socket has disconnected
+// Pipe socket into guest stream and vice versa
+pipeline(socket, db.createRpcStream(), socket, () => {
+  // Disconnected
 })
 
 await db.put('hello', 'world')
@@ -58,35 +61,40 @@ Encoding options are supported as usual.
 
 ## Reconnect
 
-To setup reconnect in your client set the `retry` option to `true` and reconnect to your server when the connection fails:
+To setup reconnect set the `retry` option to `true` and reconnect to your server when the connection fails:
 
 ```js
-const manylevel = require('many-level')
+const { ManyLevelGuest } = require('many-level')
 const { pipeline } = require('readable-stream')
-const net = require('net')
+const { connect } = require('net')
 
-const db = manylevel.client({
+const db = new ManyLevelGuest({
   retry: true
 })
 
-const connect = function () {
-  const socket = net.connect(9000)
+const reconnect = function () {
+  const socket = connect(9000)
 
-  pipeline(socket, db.connect(), socket, () => {
-    setTimeout(connect, 1000) // reconnect after 1s
+  pipeline(socket, db.createRpcStream(), socket, () => {
+    // Reconnect after 1 second
+    setTimeout(reconnect, 1000)
   })
 }
 
-connect()
+reconnect()
 ```
 
 `many-level` will now make sure to retry your pending operations when you reconnect. If you create a read stream and your connection fails half way through reading that stream `many-level` makes sure to only retry the part of the stream you are missing. Please note that this might not guarantee leveldb snapshotting if you rely on that.
 
 ## API
 
-#### `stream = manylevel.server(db, [options])`
+### Host
 
-Returns a new duplex server stream that you should connect with a client. Options include:
+#### `host = new ManyLevelHost(db, [options])`
+
+Create a new host that exposes `db` to clients. The `db` argument must be an `abstract-level` database that supports the `'buffer'` encoding (most if not all do). It can also be a sublevel (because `db.sublevel()` itself returns an `abstract-level` database) which allows for exposing a specific section of the database.
+
+The optional `options` object may contain:
 
 ```js
 {
@@ -97,22 +105,35 @@ Returns a new duplex server stream that you should connect with a client. Option
 }
 ```
 
-#### `clientDb = manylevel.client([options])`
+#### `hostStream = host.createRpcStream()`
 
-Creates a new `abstract-level` database that you should connect with a server. The optional `options` object may contain:
+Create a duplex host stream to be piped into a guest stream.
+
+### Guest
+
+#### `db = new ManyLevelGuest([options])`
+
+Create a guest database that reads and writes to the host's database. The `ManyLevelGuest` class extends `AbstractLevel` and thus follows the public API of [abstract-level](https://github.com/Level/abstract-level). It opens itself, but unlike other `abstract-level` implementations, cannot be re-opened once `db.close()` has been called.
+
+The optional `options` object may contain:
 
 - `keyEncoding` (string or object, default `'utf8'`): encoding to use for keys
-- `valueEncoding` (string or object, default `'utf8'`): encoding to use for values.
+- `valueEncoding` (string or object, default `'utf8'`): encoding to use for values
+- `retry` (boolean, default `false`): if true, resend operations when reconnected. If false, abort operations when disconnected, which means to yield an error on e.g. `db.get()`.
 
-See [Encodings](https://github.com/Level/abstract-level#encodings) for a full description of these options.
+See [Encodings](https://github.com/Level/abstract-level#encodings) for a full description of the encoding options.
 
-#### `stream = clientDb.connect()`
+#### `guestStream = db.createRpcStream([options])`
 
-Returns a new duplex client stream that you should connect with a server stream.
+Create a duplex guest stream to be piped into a host stream. Will throw if `createRpcStream()` was previously called and that stream has not closed. The optional `options` object may contain:
 
-#### `stream = clientDb.createRpcStream()`
+- `ref` (object, default `null`): an object to only keep the Node.js event loop alive while there are pending database operations. Should have a `ref()` method to be called on a new operation like `db.get()` and an `unref()` method to be called when all operations have finished (or when the database is closed). A Node.js `net` socket satisfies that interface. The `ref` option is not relevant when `ManyLevelGuest` is used in a browser environment.
 
-An alias to `.connect` for [`multileveldown`](https://github.com/Level/multileveldown) and originally [`multilevel`](https://github.com/juliangruber/multilevel) API compatibility.
+Until this stream has been piped into a (connected) stream, operations made on `db` are queued up in memory.
+
+#### `guestStream = db.connect()`
+
+An alias to `createRpcStream()` for [`multileveldown`](https://github.com/Level/multileveldown) API compatibility.
 
 ## Install
 
