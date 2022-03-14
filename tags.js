@@ -16,7 +16,8 @@ const INPUT = [
 const OUTPUT = [
   messages.Callback,
   messages.IteratorData,
-  messages.GetManyCallback
+  messages.GetManyCallback,
+  messages.IteratorError
 ]
 
 exports.input = {
@@ -38,6 +39,7 @@ exports.output = {
   callback: 0,
   iteratorData: 1,
   getManyCallback: 2,
+  iteratorError: 3,
 
   encoding (tag) {
     return OUTPUT[tag]

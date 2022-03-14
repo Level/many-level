@@ -10,6 +10,7 @@ const { input, output } = require('./tags')
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
 const encodingOptions = Object.freeze({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
 const stateEvents = new Set(['opening', 'open', 'closing', 'closed'])
+const kEnded = Symbol('ended')
 const kClosed = Symbol('closed')
 const kDb = Symbol('db')
 const kOptions = Symbol('options')
@@ -212,25 +213,42 @@ function Iterator (db, req, encode) {
   this._iterator = db.iterator(cleanRangeOptions(req.options))
   this._encode = encode
   this._send = (err, key, value) => {
-    // TODO: send key and value directly (sans protobuf) with
-    // <tag><id><key length><key><value>, avoiding a copy
     this._nexting = false
-    this._data.error = errorCode(err)
-    this._data.key = key
-    this._data.value = value
-    this.batch--
-    const buf = Buffer.allocUnsafe(messages.IteratorData.encodingLength(this._data) + 1)
-    buf[0] = output.iteratorData
-    messages.IteratorData.encode(this._data, buf, 1)
-    encode.write(buf)
+
+    if (err) {
+      // Client must send another request if it wants to continue
+      this.batch = 0
+
+      const data = { id: this._data.id, error: { code: errorCode(err) } }
+      const buf = Buffer.allocUnsafe(messages.IteratorError.encodingLength(data) + 1)
+      buf[0] = output.iteratorError
+      messages.IteratorError.encode(data, buf, 1)
+      encode.write(buf)
+    } else {
+      this.batch--
+
+      if (key == null && value == null) {
+        this[kEnded] = true
+        this.batch = 0
+      }
+
+      // TODO: send key and value directly (sans protobuf) with
+      // <tag><id><key length><key><value>, avoiding a copy
+      this._data.key = key
+      this._data.value = value
+      const buf = Buffer.allocUnsafe(messages.IteratorData.encodingLength(this._data) + 1)
+      buf[0] = output.iteratorData
+      messages.IteratorData.encode(this._data, buf, 1)
+      encode.write(buf)
+    }
+
     this.next()
   }
   this._nexting = false
-  this._first = true
+  this[kEnded] = false
   this[kClosed] = false
   this._data = {
     id: req.id,
-    error: null,
     key: null,
     value: null
   }
@@ -238,8 +256,7 @@ function Iterator (db, req, encode) {
 
 Iterator.prototype.next = function () {
   if (this._nexting || this[kClosed]) return
-  if (!this._first && (!this.batch || this._data.error || (!this._data.key && !this._data.value))) return
-  this._first = false
+  if (this.batch <= 0 || this[kEnded]) return
   this._nexting = true
   this._iterator.next(this._send)
 }

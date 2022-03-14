@@ -80,6 +80,10 @@ ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
         oniteratordata(res)
         break
 
+      case output.iteratorError:
+        oniteratordata(res)
+        break
+
       case output.getManyCallback:
         ongetmanycallback(res)
         break
@@ -111,8 +115,6 @@ ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
     }
 
     for (const ite of self._iterators.values()) {
-      // TODO: it seems we don't clone the options anywhere. Also, why reset at all?
-      // if (ite.options === ite.iterator._options) throw new Error('bug?')
       ite.options = ite.iterator._options
       self._write(ite)
     }
@@ -369,6 +371,7 @@ Iterator.prototype._next = function (callback) {
   if (this._req.pending.length) {
     this._read++
 
+    // TODO: backpressure
     if (this._read >= this._ack) {
       this._read = 0
       this._req.options = null
@@ -377,9 +380,10 @@ Iterator.prototype._next = function (callback) {
 
     const next = this._req.pending.shift()
 
+    // TODO: make new request if next() is called again
     if (next.error) {
       return this.nextTick(callback, new ModuleError('Could not read entry', {
-        code: next.error
+        code: next.error.code
       }))
     }
 

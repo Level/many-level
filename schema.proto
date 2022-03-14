@@ -58,15 +58,23 @@ message Iterator {
 
 message Callback {
   required uint32 id = 1;
-  optional string error = 2;
+  optional string error = 2; // TODO: use extensible CodeError
   optional bytes value = 3;
 }
 
 message IteratorData {
   required uint32 id = 1;
-  optional string error = 2;
-  optional bytes key = 3;
-  optional bytes value = 4;
+  optional bytes key = 2;
+  optional bytes value = 3;
+}
+
+message IteratorError {
+  required uint32 id = 1;
+  required CodeError error = 2;
+}
+
+message CodeError {
+  required string code = 1;
 }
 
 message IteratorClose {
@@ -80,7 +88,7 @@ message GetMany {
 
 message GetManyCallback {
   required uint32 id = 1;
-  optional string error = 2;
+  optional string error = 2; // TODO: use extensible CodeError
   repeated Value values = 3;
 
   // Wrapped to support undefined values
