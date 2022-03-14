@@ -5,23 +5,7 @@ const { AbstractLevel, AbstractIterator } = require('abstract-level')
 const eos = require('end-of-stream')
 const lpstream = require('length-prefixed-stream')
 const ModuleError = require('module-error')
-const messages = require('./messages')
-
-const ENCODERS = [
-  messages.Get,
-  messages.Put,
-  messages.Delete,
-  messages.Batch,
-  messages.Iterator,
-  messages.Clear,
-  messages.GetMany
-]
-
-const DECODERS = [
-  messages.Callback,
-  messages.IteratorData,
-  messages.GetManyCallback
-]
+const { input, output } = require('./tags')
 
 const kExplicitClose = Symbol('explicitClose')
 const kAbortRequests = Symbol('abortRequests')
@@ -74,27 +58,29 @@ ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
 
   decode.on('data', function (data) {
     if (!data.length) return
-    const tag = data[0]
-    if (tag >= DECODERS.length) return
 
-    const dec = DECODERS[tag]
+    const tag = data[0]
+    const encoding = output.encoding(tag)
+
+    if (!encoding) return
+
     let res
     try {
-      res = dec.decode(data, 1)
+      res = encoding.decode(data, 1)
     } catch (err) {
       return
     }
 
     switch (tag) {
-      case 0:
+      case output.callback:
         oncallback(res)
         break
 
-      case 1:
+      case output.iteratorData:
         oniteratordata(res)
         break
 
-      case 2:
+      case output.getManyCallback:
         ongetmanycallback(res)
         break
     }
@@ -207,7 +193,7 @@ ManyLevelGuest.prototype._get = function (key, opts, cb) {
   if (this._db) return this._db._get(key, opts, cb)
 
   const req = {
-    tag: 0,
+    tag: input.get,
     id: 0,
     key: key,
     callback: cb
@@ -221,7 +207,7 @@ ManyLevelGuest.prototype._getMany = function (keys, opts, cb) {
   if (this._db) return this._db._getMany(keys, opts, cb)
 
   const req = {
-    tag: 6,
+    tag: input.getMany,
     id: 0,
     keys: keys,
     callback: cb
@@ -235,7 +221,7 @@ ManyLevelGuest.prototype._put = function (key, value, opts, cb) {
   if (this._db) return this._db._put(key, value, opts, cb)
 
   const req = {
-    tag: 1,
+    tag: input.put,
     id: 0,
     key: key,
     value: value,
@@ -250,7 +236,7 @@ ManyLevelGuest.prototype._del = function (key, opts, cb) {
   if (this._db) return this._db._del(key, opts, cb)
 
   const req = {
-    tag: 2,
+    tag: input.del,
     id: 0,
     key: key,
     callback: cb
@@ -264,7 +250,7 @@ ManyLevelGuest.prototype._batch = function (batch, opts, cb) {
   if (this._db) return this._db._batch(batch, opts, cb)
 
   const req = {
-    tag: 3,
+    tag: input.batch,
     id: 0,
     ops: batch,
     callback: cb
@@ -278,7 +264,7 @@ ManyLevelGuest.prototype._clear = function (opts, cb) {
   if (this._db) return this._db._clear(opts, cb)
 
   const req = {
-    tag: 5,
+    tag: input.clear,
     id: 0,
     options: opts,
     callback: cb || noop
@@ -290,7 +276,7 @@ ManyLevelGuest.prototype._clear = function (opts, cb) {
 
 ManyLevelGuest.prototype._write = function (req) {
   if (this._requests.size + this._iterators.size === 1) ref(this._ref)
-  const enc = ENCODERS[req.tag]
+  const enc = input.encoding(req.tag)
   const buf = Buffer.allocUnsafe(enc.encodingLength(req) + 1)
   buf[0] = req.tag
   enc.encode(req, buf, 1)
@@ -350,7 +336,7 @@ class Iterator extends AbstractIterator {
     this._options = options
 
     const req = {
-      tag: 4,
+      tag: input.iterator,
       id: 0,
       batch: 32,
       pending: [],

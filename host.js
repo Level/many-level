@@ -5,6 +5,7 @@ const ModuleError = require('module-error')
 const eos = require('end-of-stream')
 const duplexify = require('duplexify')
 const messages = require('./messages')
+const { input, output } = require('./tags')
 
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
 const encodingOptions = Object.freeze({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
@@ -12,16 +13,6 @@ const kClosed = Symbol('closed')
 const kDb = Symbol('db')
 const kOptions = Symbol('options')
 const noop = () => {}
-
-const DECODERS = [
-  messages.Get,
-  messages.Put,
-  messages.Delete,
-  messages.Batch,
-  messages.Iterator,
-  messages.Clear,
-  messages.GetMany
-]
 
 // TODO: make use of db.supports manifest
 class ManyLevelHost {
@@ -71,36 +62,38 @@ function createRpcStream (db, options, streamOptions) {
 
     decode.on('data', function (data) {
       if (!data.length) return
-      const tag = data[0]
-      if (tag >= DECODERS.length) return
 
-      const dec = DECODERS[tag]
+      const tag = data[0]
+      const encoding = input.encoding(tag)
+
+      if (!encoding) return
+
       let req
       try {
-        req = dec.decode(data, 1)
+        req = encoding.decode(data, 1)
       } catch (err) {
         return
       }
 
       if (readonly) {
         switch (tag) {
-          case 0: return onget(req)
-          case 1: return onreadonly(req)
-          case 2: return onreadonly(req)
-          case 3: return onreadonly(req)
-          case 4: return oniterator(req)
-          case 5: return onreadonly(req)
-          case 6: return ongetmany(req)
+          case input.get: return onget(req)
+          case input.put: return onreadonly(req)
+          case input.del: return onreadonly(req)
+          case input.batch: return onreadonly(req)
+          case input.iterator: return oniterator(req)
+          case input.clear: return onreadonly(req)
+          case input.getMany: return ongetmany(req)
         }
       } else {
         switch (tag) {
-          case 0: return onget(req)
-          case 1: return onput(req)
-          case 2: return ondel(req)
-          case 3: return onbatch(req)
-          case 4: return oniterator(req)
-          case 5: return onclear(req)
-          case 6: return ongetmany(req)
+          case input.get: return onget(req)
+          case input.put: return onput(req)
+          case input.del: return ondel(req)
+          case input.batch: return onbatch(req)
+          case input.iterator: return oniterator(req)
+          case input.clear: return onclear(req)
+          case input.getMany: return ongetmany(req)
         }
       }
     })
@@ -108,7 +101,7 @@ function createRpcStream (db, options, streamOptions) {
     function callback (id, err, value) {
       const msg = { id, error: errorCode(err), value }
       const buf = Buffer.allocUnsafe(messages.Callback.encodingLength(msg) + 1)
-      buf[0] = 0 // Tag
+      buf[0] = output.callback
       messages.Callback.encode(msg, buf, 1)
       encode.write(buf)
     }
@@ -116,7 +109,7 @@ function createRpcStream (db, options, streamOptions) {
     function getManyCallback (id, err, values) {
       const msg = { id, error: errorCode(err), values }
       const buf = Buffer.allocUnsafe(messages.GetManyCallback.encodingLength(msg) + 1)
-      buf[0] = 2 // Tag
+      buf[0] = output.getManyCallback
       messages.GetManyCallback.encode(msg, buf, 1)
       encode.write(buf)
     }
@@ -204,7 +197,7 @@ function Iterator (db, req, encode) {
     this._data.value = value
     this.batch--
     const buf = Buffer.allocUnsafe(messages.IteratorData.encodingLength(this._data) + 1)
-    buf[0] = 1
+    buf[0] = output.iteratorData
     messages.IteratorData.encode(this._data, buf, 1)
     encode.write(buf)
     this.next()

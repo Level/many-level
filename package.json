@@ -19,6 +19,7 @@
     "index.js",
     "messages.js",
     "streams.js",
+    "tags.js",
     "CHANGELOG.md",
     "UPGRADING.md"
   ],
