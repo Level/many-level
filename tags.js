@@ -9,7 +9,8 @@ const INPUT = [
   messages.Batch,
   messages.Iterator,
   messages.Clear,
-  messages.GetMany
+  messages.GetMany,
+  messages.IteratorClose
 ]
 
 const OUTPUT = [
@@ -26,6 +27,7 @@ exports.input = {
   iterator: 4,
   clear: 5,
   getMany: 6,
+  iteratorClose: 7,
 
   encoding (tag) {
     return INPUT[tag]

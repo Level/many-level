@@ -37,6 +37,10 @@ const stream = db.createRpcStream(options)
 
 Arguments and options are the same. The previous exports (`server` and `client`) are still available but log a deprecation warning.
 
+### Protocol changes
+
+A `many-level` guest cannot talk to a `multileveldown` server due to breaking changes in the protocol. This means both ends must be upgraded to `many-level`.
+
 ### Error codes
 
 Like `abstract-level`, `many-level` started using [error codes](https://github.com/Level/abstract-level#errors). The specific error messages that `multileveldown` had did not change, but it is a breaking change in the sense that going forward, the semver contract will be on codes instead of messages (which, in other words, may change at any time). If you previously did:

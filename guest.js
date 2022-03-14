@@ -403,8 +403,7 @@ Iterator.prototype._next = function (callback) {
 }
 
 Iterator.prototype._close = function (cb) {
-  this._req.batch = 0
-  this.db._write(this._req)
+  this.db._write({ tag: input.iteratorClose, id: this._req.id })
   this.db._iterators.remove(this._req.id)
   this.db._flushMaybe()
   this.nextTick(cb)

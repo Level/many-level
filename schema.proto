@@ -41,7 +41,7 @@ message Clear {
 
 message Iterator {
   required uint32 id = 1;
-  optional uint32 batch = 2;
+  required uint32 batch = 2;
   optional Options options = 3;
 
   message Options {
@@ -67,6 +67,10 @@ message IteratorData {
   optional string error = 2;
   optional bytes key = 3;
   optional bytes value = 4;
+}
+
+message IteratorClose {
+  required uint32 id = 1;
 }
 
 message GetMany {

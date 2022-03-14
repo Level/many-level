@@ -103,6 +103,7 @@ function createRpcStream (db, options, streamOptions) {
           case input.del: return onreadonly(req)
           case input.batch: return onreadonly(req)
           case input.iterator: return oniterator(req)
+          case input.iteratorClose: return oniteratorclose(req)
           case input.clear: return onreadonly(req)
           case input.getMany: return ongetmany(req)
         }
@@ -113,6 +114,7 @@ function createRpcStream (db, options, streamOptions) {
           case input.del: return ondel(req)
           case input.batch: return onbatch(req)
           case input.iterator: return oniterator(req)
+          case input.iteratorClose: return oniteratorclose(req)
           case input.clear: return onclear(req)
           case input.getMany: return ongetmany(req)
         }
@@ -182,19 +184,19 @@ function createRpcStream (db, options, streamOptions) {
     function oniterator (req) {
       let prev = iterators.get(req.id)
 
-      if (req.batch) {
-        if (prev === undefined) {
-          prev = new Iterator(db, req, encode)
-          iterators.set(req.id, prev)
-        }
-
-        prev.batch = req.batch
-        prev.next()
-      } else {
-        // If batch is not set, this is a close signal
-        iterators.delete(req.id)
-        if (prev !== undefined) prev.close()
+      if (prev === undefined) {
+        prev = new Iterator(db, req, encode)
+        iterators.set(req.id, prev)
       }
+
+      prev.batch = req.batch
+      prev.next()
+    }
+
+    function oniteratorclose (req) {
+      const prev = iterators.get(req.id)
+      iterators.delete(req.id)
+      if (prev !== undefined) prev.close()
     }
 
     function onclear (req) {
@@ -206,7 +208,7 @@ function createRpcStream (db, options, streamOptions) {
 }
 
 function Iterator (db, req, encode) {
-  this.batch = req.batch || 0
+  this.batch = req.batch
   this._iterator = db.iterator(cleanRangeOptions(req.options))
   this._encode = encode
   this._send = (err, key, value) => {
