@@ -9,6 +9,7 @@ const { input, output } = require('./tags')
 
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
 const encodingOptions = Object.freeze({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
+const stateEvents = new Set(['opening', 'open', 'closing', 'closed'])
 const kClosed = Symbol('closed')
 const kDb = Symbol('db')
 const kOptions = Symbol('options')
@@ -23,6 +24,7 @@ class ManyLevelHost {
     this[kOptions].preput = this[kOptions].preput || function (key, val, cb) { cb(null) }
     this[kOptions].predel = this[kOptions].predel || function (key, cb) { cb(null) }
     this[kOptions].prebatch = this[kOptions].prebatch || function (ops, cb) { cb(null) }
+    this[kOptions].events = (this[kOptions].events || getEvents(db)).filter(safeEvent)
   }
 
   createRpcStream (streamOptions) {
@@ -32,7 +34,15 @@ class ManyLevelHost {
 
 exports.ManyLevelHost = ManyLevelHost
 
-// TODO: support events
+function getEvents (db) {
+  const events = db.supports.events
+  return Object.keys(events).filter(k => events[k])
+}
+
+function safeEvent (event) {
+  return event && typeof event === 'string' && !stateEvents.has(event)
+}
+
 // TODO: support stream options (highWaterMark)
 function createRpcStream (db, options, streamOptions) {
   const readonly = options.readonly
@@ -45,6 +55,15 @@ function createRpcStream (db, options, streamOptions) {
   const prebatch = options.prebatch
 
   db.open({ passive: true }, ready)
+
+  // TODO: send events to guest. Challenges:
+  // - Need to know encodings or emit encoded data; current abstract-level events don't suffice
+  // - Skip events triggered by guest itself
+  // - Support data of custom events, maybe with `cbor-x` and/or extensions via manifest
+  // - Include events emitted before open callback
+  // for (const event of options.events) {
+  //   db.on(event, ...)
+  // }
 
   return stream
 
