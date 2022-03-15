@@ -19,6 +19,7 @@ const kMaxItemLength = Symbol('maxItemLength')
 const kPendingAcks = Symbol('pendingAcks')
 const kDataMessage = Symbol('dataMessage')
 const kEndMessage = Symbol('endMessage')
+const kHandleMany = Symbol('handleMany')
 const noop = () => {}
 
 // TODO: make use of db.supports manifest
@@ -207,20 +208,49 @@ function createRpcStream (db, options, streamOptions) {
   }
 }
 
-function Iterator (db, req, encode) {
-  // TODO: use symbols
-  this._mode = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
-  this._iterator = db[this._mode](cleanRangeOptions(req.options))
-  this._encode = encode
-  this._send = (err, items) => {
+class Iterator {
+  constructor (db, req, encode) {
+    // TODO: use symbols
+    this._mode = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
+    this._iterator = db[this._mode](cleanRangeOptions(req.options))
+    this._encode = encode
+    this._nexting = false
+    this[kMaxItemLength] = 1
+    this[kPendingAcks] = 0
+    this[kEnded] = false
+    this[kClosed] = false
+    this[kSize] = 0
+    this[kDataMessage] = { id: req.id, data: [] }
+    this[kEndMessage] = { id: req.id }
+    this[kHandleMany] = this[kHandleMany].bind(this)
+  }
+
+  next () {
+    if (this._nexting || this[kClosed]) return
+    if (this[kEnded] || this[kPendingAcks] > 1) return
+
+    if (this[kSize] === 0) {
+      // Only want 1 entry initially, for early termination use cases
+      this[kSize] = 1
+    } else {
+      // Fill the stream's internal buffer
+      const room = Math.max(1, this._encode.writableHighWaterMark - this._encode.writableLength)
+      this[kSize] = Math.max(32, Math.round(room / this[kMaxItemLength]))
+    }
+
+    this._nexting = true
+    this._iterator.nextv(this[kSize], this[kHandleMany])
+  }
+
+  [kHandleMany] (err, items) {
     this._nexting = false
 
     if (err) {
       const data = { id: this[kDataMessage].id, error: errorCode(err) }
-      encode.write(encodeMessage(data, output.iteratorError))
+      this._encode.write(encodeMessage(data, output.iteratorError))
     } else if (items.length === 0) {
       this[kEnded] = true
-      encode.write(encodeMessage(this[kEndMessage], output.iteratorEnd))
+      this._encode.write(encodeMessage(this[kEndMessage], output.iteratorEnd))
     } else {
       if (this._mode === 'iterator') {
         const data = this[kDataMessage].data = new Array(items.length * 2)
@@ -237,7 +267,7 @@ function Iterator (db, req, encode) {
       const buf = encodeMessage(this[kDataMessage], output.iteratorData)
       const estimatedItemLength = Math.ceil(buf.length / items.length)
 
-      encode.write(buf)
+      this._encode.write(buf)
 
       this[kMaxItemLength] = Math.max(this[kMaxItemLength], estimatedItemLength)
       this[kPendingAcks]++
@@ -246,37 +276,12 @@ function Iterator (db, req, encode) {
       this.next()
     }
   }
-  this._nexting = false
-  this[kMaxItemLength] = 1
-  this[kPendingAcks] = 0
-  this[kEnded] = false
-  this[kClosed] = false
-  this[kSize] = 0
-  this[kDataMessage] = { id: req.id, data: [] }
-  this[kEndMessage] = { id: req.id }
-}
 
-Iterator.prototype.next = function () {
-  if (this._nexting || this[kClosed]) return
-  if (this[kEnded] || this[kPendingAcks] > 1) return
-
-  if (this[kSize] === 0) {
-    // Only want 1 entry initially, for early termination use cases
-    this[kSize] = 1
-  } else {
-    // Fill the stream's internal buffer
-    const room = Math.max(1, this._encode.writableHighWaterMark - this._encode.writableLength)
-    this[kSize] = Math.max(32, Math.round(room / this[kMaxItemLength]))
+  close () {
+    if (this[kClosed]) return
+    this[kClosed] = true
+    this._iterator.close(noop)
   }
-
-  this._nexting = true
-  this._iterator.nextv(this[kSize], this._send)
-}
-
-Iterator.prototype.close = function () {
-  if (this[kClosed]) return
-  this[kClosed] = true
-  this._iterator.close(noop)
 }
 
 function encodeMessage (msg, tag) {
