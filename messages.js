@@ -66,6 +66,20 @@ var IteratorData = exports.IteratorData = {
   decode: null
 }
 
+var IteratorAck = exports.IteratorAck = {
+  buffer: true,
+  encodingLength: null,
+  encode: null,
+  decode: null
+}
+
+var IteratorEnd = exports.IteratorEnd = {
+  buffer: true,
+  encodingLength: null,
+  encode: null,
+  decode: null
+}
+
 var IteratorError = exports.IteratorError = {
   buffer: true,
   encodingLength: null,
@@ -109,6 +123,8 @@ defineClear()
 defineIterator()
 defineCallback()
 defineIteratorData()
+defineIteratorAck()
+defineIteratorEnd()
 defineIteratorError()
 defineCodeError()
 defineIteratorClose()
@@ -894,9 +910,6 @@ function defineIterator () {
     if (!defined(obj.id)) throw new Error("id is required")
     var len = encodings.varint.encodingLength(obj.id)
     length += 1 + len
-    if (!defined(obj.batch)) throw new Error("batch is required")
-    var len = encodings.varint.encodingLength(obj.batch)
-    length += 1 + len
     if (defined(obj.options)) {
       var len = Options.encodingLength(obj.options)
       length += varint.encodingLength(len)
@@ -913,12 +926,8 @@ function defineIterator () {
     buf[offset++] = 8
     encodings.varint.encode(obj.id, buf, offset)
     offset += encodings.varint.encode.bytes
-    if (!defined(obj.batch)) throw new Error("batch is required")
-    buf[offset++] = 16
-    encodings.varint.encode(obj.batch, buf, offset)
-    offset += encodings.varint.encode.bytes
     if (defined(obj.options)) {
-      buf[offset++] = 26
+      buf[offset++] = 18
       varint.encode(Options.encodingLength(obj.options), buf, offset)
       offset += varint.encode.bytes
       Options.encode(obj.options, buf, offset)
@@ -935,14 +944,12 @@ function defineIterator () {
     var oldOffset = offset
     var obj = {
       id: 0,
-      batch: 0,
       options: null
     }
     var found0 = false
-    var found1 = false
     while (true) {
       if (end <= offset) {
-        if (!found0 || !found1) throw new Error("Decoded message is not valid")
+        if (!found0) throw new Error("Decoded message is not valid")
         decode.bytes = offset - oldOffset
         return obj
       }
@@ -956,11 +963,6 @@ function defineIterator () {
         found0 = true
         break
         case 2:
-        obj.batch = encodings.varint.decode(buf, offset)
-        offset += encodings.varint.decode.bytes
-        found1 = true
-        break
-        case 3:
         var len = varint.decode(buf, offset)
         offset += varint.decode.bytes
         obj.options = Options.decode(buf, offset, offset + len)
@@ -1067,13 +1069,12 @@ function defineIteratorData () {
     if (!defined(obj.id)) throw new Error("id is required")
     var len = encodings.varint.encodingLength(obj.id)
     length += 1 + len
-    if (defined(obj.key)) {
-      var len = encodings.bytes.encodingLength(obj.key)
-      length += 1 + len
-    }
-    if (defined(obj.value)) {
-      var len = encodings.bytes.encodingLength(obj.value)
-      length += 1 + len
+    if (defined(obj.data)) {
+      for (var i = 0; i < obj.data.length; i++) {
+        if (!defined(obj.data[i])) continue
+        var len = encodings.bytes.encodingLength(obj.data[i])
+        length += 1 + len
+      }
     }
     return length
   }
@@ -1086,15 +1087,13 @@ function defineIteratorData () {
     buf[offset++] = 8
     encodings.varint.encode(obj.id, buf, offset)
     offset += encodings.varint.encode.bytes
-    if (defined(obj.key)) {
-      buf[offset++] = 18
-      encodings.bytes.encode(obj.key, buf, offset)
-      offset += encodings.bytes.encode.bytes
-    }
-    if (defined(obj.value)) {
-      buf[offset++] = 26
-      encodings.bytes.encode(obj.value, buf, offset)
-      offset += encodings.bytes.encode.bytes
+    if (defined(obj.data)) {
+      for (var i = 0; i < obj.data.length; i++) {
+        if (!defined(obj.data[i])) continue
+        buf[offset++] = 18
+        encodings.bytes.encode(obj.data[i], buf, offset)
+        offset += encodings.bytes.encode.bytes
+      }
     }
     encode.bytes = offset - oldOffset
     return buf
@@ -1107,8 +1106,7 @@ function defineIteratorData () {
     var oldOffset = offset
     var obj = {
       id: 0,
-      key: null,
-      value: null
+      data: []
     }
     var found0 = false
     while (true) {
@@ -1127,12 +1125,120 @@ function defineIteratorData () {
         found0 = true
         break
         case 2:
-        obj.key = encodings.bytes.decode(buf, offset)
+        obj.data.push(encodings.bytes.decode(buf, offset))
         offset += encodings.bytes.decode.bytes
         break
-        case 3:
-        obj.value = encodings.bytes.decode(buf, offset)
-        offset += encodings.bytes.decode.bytes
+        default:
+        offset = skip(prefix & 7, buf, offset)
+      }
+    }
+  }
+}
+
+function defineIteratorAck () {
+  IteratorAck.encodingLength = encodingLength
+  IteratorAck.encode = encode
+  IteratorAck.decode = decode
+
+  function encodingLength (obj) {
+    var length = 0
+    if (!defined(obj.id)) throw new Error("id is required")
+    var len = encodings.varint.encodingLength(obj.id)
+    length += 1 + len
+    return length
+  }
+
+  function encode (obj, buf, offset) {
+    if (!offset) offset = 0
+    if (!buf) buf = Buffer.allocUnsafe(encodingLength(obj))
+    var oldOffset = offset
+    if (!defined(obj.id)) throw new Error("id is required")
+    buf[offset++] = 8
+    encodings.varint.encode(obj.id, buf, offset)
+    offset += encodings.varint.encode.bytes
+    encode.bytes = offset - oldOffset
+    return buf
+  }
+
+  function decode (buf, offset, end) {
+    if (!offset) offset = 0
+    if (!end) end = buf.length
+    if (!(end <= buf.length && offset <= buf.length)) throw new Error("Decoded message is not valid")
+    var oldOffset = offset
+    var obj = {
+      id: 0
+    }
+    var found0 = false
+    while (true) {
+      if (end <= offset) {
+        if (!found0) throw new Error("Decoded message is not valid")
+        decode.bytes = offset - oldOffset
+        return obj
+      }
+      var prefix = varint.decode(buf, offset)
+      offset += varint.decode.bytes
+      var tag = prefix >> 3
+      switch (tag) {
+        case 1:
+        obj.id = encodings.varint.decode(buf, offset)
+        offset += encodings.varint.decode.bytes
+        found0 = true
+        break
+        default:
+        offset = skip(prefix & 7, buf, offset)
+      }
+    }
+  }
+}
+
+function defineIteratorEnd () {
+  IteratorEnd.encodingLength = encodingLength
+  IteratorEnd.encode = encode
+  IteratorEnd.decode = decode
+
+  function encodingLength (obj) {
+    var length = 0
+    if (!defined(obj.id)) throw new Error("id is required")
+    var len = encodings.varint.encodingLength(obj.id)
+    length += 1 + len
+    return length
+  }
+
+  function encode (obj, buf, offset) {
+    if (!offset) offset = 0
+    if (!buf) buf = Buffer.allocUnsafe(encodingLength(obj))
+    var oldOffset = offset
+    if (!defined(obj.id)) throw new Error("id is required")
+    buf[offset++] = 8
+    encodings.varint.encode(obj.id, buf, offset)
+    offset += encodings.varint.encode.bytes
+    encode.bytes = offset - oldOffset
+    return buf
+  }
+
+  function decode (buf, offset, end) {
+    if (!offset) offset = 0
+    if (!end) end = buf.length
+    if (!(end <= buf.length && offset <= buf.length)) throw new Error("Decoded message is not valid")
+    var oldOffset = offset
+    var obj = {
+      id: 0
+    }
+    var found0 = false
+    while (true) {
+      if (end <= offset) {
+        if (!found0) throw new Error("Decoded message is not valid")
+        decode.bytes = offset - oldOffset
+        return obj
+      }
+      var prefix = varint.decode(buf, offset)
+      offset += varint.decode.bytes
+      var tag = prefix >> 3
+      switch (tag) {
+        case 1:
+        obj.id = encodings.varint.decode(buf, offset)
+        offset += encodings.varint.decode.bytes
+        found0 = true
         break
         default:
         offset = skip(prefix & 7, buf, offset)

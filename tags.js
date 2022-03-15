@@ -10,14 +10,16 @@ const INPUT = [
   messages.Iterator,
   messages.Clear,
   messages.GetMany,
-  messages.IteratorClose
+  messages.IteratorClose,
+  messages.IteratorAck
 ]
 
 const OUTPUT = [
   messages.Callback,
   messages.IteratorData,
   messages.GetManyCallback,
-  messages.IteratorError
+  messages.IteratorError,
+  messages.IteratorEnd
 ]
 
 exports.input = {
@@ -29,6 +31,7 @@ exports.input = {
   clear: 5,
   getMany: 6,
   iteratorClose: 7,
+  iteratorAck: 8,
 
   encoding (tag) {
     return INPUT[tag]
@@ -40,6 +43,7 @@ exports.output = {
   iteratorData: 1,
   getManyCallback: 2,
   iteratorError: 3,
+  iteratorEnd: 4,
 
   encoding (tag) {
     return OUTPUT[tag]

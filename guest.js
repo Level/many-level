@@ -11,7 +11,7 @@ const kExplicitClose = Symbol('explicitClose')
 const kAbortRequests = Symbol('abortRequests')
 const kEnded = Symbol('kEnded')
 const kRemote = Symbol('remote')
-const MAX_UINT = Math.pow(2, 32) - 1
+const kAckMessage = Symbol('ackMessage')
 
 class ManyLevelGuest extends AbstractLevel {
   constructor (options) {
@@ -84,6 +84,10 @@ ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
         oniteratordata(res)
         break
 
+      case output.iteratorEnd:
+        oniteratorend(res)
+        break
+
       case output.getManyCallback:
         ongetmanycallback(res)
         break
@@ -124,6 +128,14 @@ ManyLevelGuest.prototype.createRpcStream = function (opts, proxy) {
     const req = self._iterators.get(res.id)
     if (!req) return
     req.pending.push(res)
+    if (req.callback) req.iterator._next(req.callback)
+  }
+
+  function oniteratorend (res) {
+    const req = self._iterators.get(res.id)
+    if (!req) return
+    // https://github.com/Level/abstract-level/issues/19
+    req.iterator[kEnded] = true
     if (req.callback) req.iterator._next(req.callback)
   }
 
@@ -319,11 +331,16 @@ ManyLevelGuest.prototype._open = function (options, cb) {
   this.nextTick(cb)
 }
 
-ManyLevelGuest.prototype._iterator = function (options) {
+ManyLevelGuest.prototype.iterator = function (options) {
   if (this._db) {
-    return this._db._iterator(options)
+    // TODO: this is 3x faster. Why?
+    return this._db.iterator(options)
+  } else {
+    return AbstractLevel.prototype.iterator.call(this, options)
   }
+}
 
+ManyLevelGuest.prototype._iterator = function (options) {
   return new Iterator(this, options)
 }
 
@@ -340,7 +357,6 @@ class Iterator extends AbstractIterator {
     const req = {
       tag: input.iterator,
       id: 0,
-      batch: 32,
       pending: [],
       iterator: this,
       options: options,
@@ -349,9 +365,12 @@ class Iterator extends AbstractIterator {
 
     req.id = this.db._iterators.add(req)
 
+    this[kAckMessage] = {
+      tag: input.iteratorAck,
+      id: req.id
+    }
+
     // TODO: use symbols
-    this._read = 0
-    this._ack = Math.floor(req.batch / 2)
     this._req = req
     this[kEnded] = false
     this.db._write(req)
@@ -362,48 +381,39 @@ class Iterator extends AbstractIterator {
 
 // TODO: implement optimized `nextv()`
 Iterator.prototype._next = function (callback) {
-  if (this[kEnded]) {
-    return this.nextTick(callback)
-  }
-
   this._req.callback = null
 
-  if (this._req.pending.length) {
-    this._read++
-
-    // TODO: backpressure
-    if (this._read >= this._ack) {
-      this._read = 0
-      this._req.options = null
-      this.db._write(this._req)
-    }
-
-    const next = this._req.pending.shift()
+  if (this._req.pending.length !== 0) {
+    const next = this._req.pending[0]
 
     // TODO: make new request if next() is called again
     if (next.error) {
+      this._req.pending.shift()
       return this.nextTick(callback, new ModuleError('Could not read entry', {
         code: next.error.code
       }))
     }
 
-    if (!next.key && !next.value) {
-      // https://github.com/Level/abstract-level/issues/19
-      this[kEnded] = true
-      return this.nextTick(callback)
+    const key = this._options.keys ? next.data.shift() : undefined
+    const val = this._options.values ? next.data.shift() : undefined
+
+    // Acknowledge receipt
+    if (next.data.length === 0) {
+      this._req.pending.shift()
+      this.db._write(this[kAckMessage])
     }
 
-    this._options.gt = next.key
+    // TODO: the keys option must be true if retry is enabled
+    this._options.gt = key
     this._options.gte = null
     if (this._options.limit > 0) this._options.limit--
 
-    const key = normalizeValue(next.key)
-    const val = normalizeValue(next.value)
-
-    return this.nextTick(callback, undefined, key, val)
+    this.nextTick(callback, undefined, key, val)
+  } else if (this[kEnded]) {
+    this.nextTick(callback)
+  } else {
+    this._req.callback = callback
   }
-
-  this._req.callback = callback
 }
 
 Iterator.prototype._close = function (cb) {
@@ -436,7 +446,7 @@ class IdMap {
   }
 
   add (item) {
-    if (this._seq >= MAX_UINT) this._seq = 0
+    if (this._seq >= 0xffffffff) this._seq = 0
     this._map.set(++this._seq, item)
     return this._seq
   }

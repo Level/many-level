@@ -41,8 +41,7 @@ message Clear {
 
 message Iterator {
   required uint32 id = 1;
-  required uint32 batch = 2;
-  optional Options options = 3;
+  optional Options options = 2;
 
   message Options {
     optional bool keys = 1;
@@ -64,8 +63,15 @@ message Callback {
 
 message IteratorData {
   required uint32 id = 1;
-  optional bytes key = 2;
-  optional bytes value = 3;
+  repeated bytes data = 2;
+}
+
+message IteratorAck {
+  required uint32 id = 1;
+}
+
+message IteratorEnd {
+  required uint32 id = 1;
 }
 
 message IteratorError {

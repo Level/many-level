@@ -25,7 +25,7 @@ test('iterator.next() error', async function (t) {
   db._iterator = function (options) {
     const it = original.call(this, options)
 
-    it._next = function (cb) {
+    it._nextv = function (size, options, cb) {
       this.nextTick(cb, first ? new Error('foo') : new ModuleError('bar', { code: 'LEVEL_XYZ' }))
       first = false
     }

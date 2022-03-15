@@ -75,11 +75,10 @@ tape('retry iterator with gte option', async function (t) {
   t.plan(3)
 
   const db = new MemoryLevel()
-  const entryCount = 20
+  const entryCount = 1e4
+  const padding = 5
   const client = manylevel.client({
-    retry: true,
-    keyEncoding: 'buffer',
-    valueEncoding: 'buffer'
+    retry: true
   })
 
   let done = false
@@ -87,7 +86,7 @@ tape('retry iterator with gte option', async function (t) {
   let n = 0
 
   await db.batch(new Array(entryCount).fill(null).map((_, i) => {
-    return { type: 'put', key: Buffer.from([i]), value: Buffer.from([i]) }
+    return { type: 'put', key: String(i).padStart(padding, '0'), value: String(i) }
   }))
 
   // Don't test deferredOpen
@@ -97,12 +96,12 @@ tape('retry iterator with gte option', async function (t) {
   const original = db._iterator
   db._iterator = function (options) {
     const it = original.call(this, options)
-    const next = it._next
+    const nextv = it._nextv
 
-    it._next = function (cb) {
+    it._nextv = function (size, options, cb) {
       if (n++ > entryCount * 10) throw new Error('Infinite loop')
 
-      next.call(this, (...args) => {
+      nextv.call(this, size, options, (...args) => {
         setTimeout(cb.bind(null, ...args), 10)
       })
     }
@@ -125,11 +124,11 @@ tape('retry iterator with gte option', async function (t) {
     setTimeout(local.destroy.bind(local), 50)
   })()
 
-  const entries = await client.iterator({ gte: Buffer.from([1]) }).all()
+  const entries = await client.iterator({ gte: '1'.padStart(padding, '0') }).all()
   done = true
 
   t.is(entries.length, entryCount - 1)
-  t.ok(entries.every((e, index) => e[0][0] === index + 1))
+  t.ok(entries.every((e, index) => parseInt(e[0], 10) === index + 1))
   t.ok(attempts > 1, `reconnected ${attempts} times`)
 })
 

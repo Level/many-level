@@ -14,6 +14,11 @@ const kEnded = Symbol('ended')
 const kClosed = Symbol('closed')
 const kDb = Symbol('db')
 const kOptions = Symbol('options')
+const kSize = Symbol('size')
+const kMaxItemLength = Symbol('maxItemLength')
+const kPendingAcks = Symbol('pendingAcks')
+const kDataMessage = Symbol('dataMessage')
+const kEndMessage = Symbol('endMessage')
 const noop = () => {}
 
 // TODO: make use of db.supports manifest
@@ -97,28 +102,16 @@ function createRpcStream (db, options, streamOptions) {
         return
       }
 
-      if (readonly) {
-        switch (tag) {
-          case input.get: return onget(req)
-          case input.put: return onreadonly(req)
-          case input.del: return onreadonly(req)
-          case input.batch: return onreadonly(req)
-          case input.iterator: return oniterator(req)
-          case input.iteratorClose: return oniteratorclose(req)
-          case input.clear: return onreadonly(req)
-          case input.getMany: return ongetmany(req)
-        }
-      } else {
-        switch (tag) {
-          case input.get: return onget(req)
-          case input.put: return onput(req)
-          case input.del: return ondel(req)
-          case input.batch: return onbatch(req)
-          case input.iterator: return oniterator(req)
-          case input.iteratorClose: return oniteratorclose(req)
-          case input.clear: return onclear(req)
-          case input.getMany: return ongetmany(req)
-        }
+      switch (tag) {
+        case input.get: return onget(req)
+        case input.put: return readonly ? onreadonly(req) : onput(req)
+        case input.del: return readonly ? onreadonly(req) : ondel(req)
+        case input.batch: return readonly ? onreadonly(req) : onbatch(req)
+        case input.iterator: return oniterator(req)
+        case input.iteratorClose: return oniteratorclose(req)
+        case input.iteratorAck: return oniteratorack(req)
+        case input.clear: return readonly ? onreadonly(req) : onclear(req)
+        case input.getMany: return ongetmany(req)
       }
     })
 
@@ -190,14 +183,20 @@ function createRpcStream (db, options, streamOptions) {
         iterators.set(req.id, prev)
       }
 
-      prev.batch = req.batch
       prev.next()
     }
 
+    function oniteratorack (req) {
+      const it = iterators.get(req.id)
+      if (it === undefined) return
+      it[kPendingAcks] = Math.max(0, it[kPendingAcks] - 1)
+      it.next()
+    }
+
     function oniteratorclose (req) {
-      const prev = iterators.get(req.id)
+      const it = iterators.get(req.id)
       iterators.delete(req.id)
-      if (prev !== undefined) prev.close()
+      if (it !== undefined) it.close()
     }
 
     function onclear (req) {
@@ -209,62 +208,83 @@ function createRpcStream (db, options, streamOptions) {
 }
 
 function Iterator (db, req, encode) {
-  this.batch = req.batch
-  this._iterator = db.iterator(cleanRangeOptions(req.options))
+  // TODO: use symbols
+  this._mode = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
+  this._iterator = db[this._mode](cleanRangeOptions(req.options))
   this._encode = encode
-  this._send = (err, key, value) => {
+  this._send = (err, items) => {
     this._nexting = false
 
     if (err) {
-      // Client must send another request if it wants to continue
-      this.batch = 0
-
-      const data = { id: this._data.id, error: { code: errorCode(err) } }
-      const buf = Buffer.allocUnsafe(messages.IteratorError.encodingLength(data) + 1)
-      buf[0] = output.iteratorError
-      messages.IteratorError.encode(data, buf, 1)
-      encode.write(buf)
+      const data = { id: this[kDataMessage].id, error: { code: errorCode(err) } }
+      encode.write(encodeMessage(data, output.iteratorError))
+    } else if (items.length === 0) {
+      this[kEnded] = true
+      encode.write(encodeMessage(this[kEndMessage], output.iteratorEnd))
     } else {
-      this.batch--
+      if (this._mode === 'iterator') {
+        const data = this[kDataMessage].data = new Array(items.length * 2)
+        let n = 0
 
-      if (key == null && value == null) {
-        this[kEnded] = true
-        this.batch = 0
+        for (const entry of items) {
+          data[n++] = entry[0]
+          data[n++] = entry[1]
+        }
+      } else {
+        this[kDataMessage].data = items
       }
 
-      // TODO: send key and value directly (sans protobuf) with
-      // <tag><id><key length><key><value>, avoiding a copy
-      this._data.key = key
-      this._data.value = value
-      const buf = Buffer.allocUnsafe(messages.IteratorData.encodingLength(this._data) + 1)
-      buf[0] = output.iteratorData
-      messages.IteratorData.encode(this._data, buf, 1)
-      encode.write(buf)
-    }
+      const buf = encodeMessage(this[kDataMessage], output.iteratorData)
+      const estimatedItemLength = Math.ceil(buf.length / items.length)
 
-    this.next()
+      encode.write(buf)
+
+      this[kMaxItemLength] = Math.max(this[kMaxItemLength], estimatedItemLength)
+      this[kPendingAcks]++
+
+      // Read ahead
+      this.next()
+    }
   }
   this._nexting = false
+  this[kMaxItemLength] = 1
+  this[kPendingAcks] = 0
   this[kEnded] = false
   this[kClosed] = false
-  this._data = {
-    id: req.id,
-    key: null,
-    value: null
-  }
+  this[kSize] = 0
+  this[kDataMessage] = { id: req.id, data: [] }
+  this[kEndMessage] = { id: req.id }
 }
 
 Iterator.prototype.next = function () {
   if (this._nexting || this[kClosed]) return
-  if (this.batch <= 0 || this[kEnded]) return
+  if (this[kEnded] || this[kPendingAcks] > 1) return
+
+  if (this[kSize] === 0) {
+    // Only want 1 entry initially, for early termination use cases
+    this[kSize] = 1
+  } else {
+    // Fill the stream's internal buffer
+    const room = Math.max(1, this._encode.writableHighWaterMark - this._encode.writableLength)
+    this[kSize] = Math.max(32, Math.round(room / this[kMaxItemLength]))
+  }
+
   this._nexting = true
-  this._iterator.next(this._send)
+  this._iterator.nextv(this[kSize], this._send)
 }
 
 Iterator.prototype.close = function () {
   if (this[kClosed]) return
   this[kClosed] = true
   this._iterator.close(noop)
+}
+
+function encodeMessage (msg, tag) {
+  const encoding = output.encoding(tag)
+  const buf = Buffer.allocUnsafe(encoding.encodingLength(msg) + 1)
+  buf[0] = tag
+  encoding.encode(msg, buf, 1)
+  return buf
 }
 
 function errorCode (err) {
