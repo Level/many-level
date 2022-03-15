@@ -390,7 +390,7 @@ Iterator.prototype._next = function (callback) {
     if (next.error) {
       this._req.pending.shift()
       return this.nextTick(callback, new ModuleError('Could not read entry', {
-        code: next.error.code
+        code: next.error
       }))
     }
 

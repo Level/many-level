@@ -216,7 +216,7 @@ function Iterator (db, req, encode) {
     this._nexting = false
 
     if (err) {
-      const data = { id: this[kDataMessage].id, error: { code: errorCode(err) } }
+      const data = { id: this[kDataMessage].id, error: errorCode(err) }
       encode.write(encodeMessage(data, output.iteratorError))
     } else if (items.length === 0) {
       this[kEnded] = true
