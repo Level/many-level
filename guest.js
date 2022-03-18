@@ -55,7 +55,7 @@ class ManyLevelGuest extends AbstractLevel {
     return 'many-level'
   }
 
-  createRpcStream (opts, proxy) {
+  createRpcStream (opts) {
     if (this[kRpcStream]) {
       throw new Error('Only one rpc stream can be active')
     }
@@ -107,8 +107,7 @@ class ManyLevelGuest extends AbstractLevel {
       self[kFlushed]()
     })
 
-    // TODO: replace length-prefixed-stream with an already-duplex stream
-    if (!proxy) proxy = duplexify()
+    const proxy = duplexify()
     proxy.setWritable(decode)
     proxy.setReadable(encode)
     eos(proxy, cleanup)
