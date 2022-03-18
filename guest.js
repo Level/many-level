@@ -12,6 +12,19 @@ const kAbortRequests = Symbol('abortRequests')
 const kEnded = Symbol('kEnded')
 const kRemote = Symbol('remote')
 const kAckMessage = Symbol('ackMessage')
+const kEncode = Symbol('encode')
+const kRef = Symbol('ref')
+const kDb = Symbol('db')
+const kRequests = Symbol('requests')
+const kIterators = Symbol('iterators')
+const kRetry = Symbol('retry')
+const kRpcStream = Symbol('rpcStream')
+const kFlushed = Symbol('flushed')
+const kWrite = Symbol('write')
+const kOptions = Symbol('options')
+const kRequest = Symbol('request')
+const kPending = Symbol('pending')
+const kCallback = Symbol('callback')
 const noop = function () {}
 
 class ManyLevelGuest extends AbstractLevel {
@@ -27,15 +40,14 @@ class ManyLevelGuest extends AbstractLevel {
       errorIfExists: false
     }, forward)
 
-    // TODO: use symbols
-    this._iterators = new IdMap()
-    this._requests = new IdMap()
-    this._retry = !!retry
-    this._encode = lpstream.encode()
+    this[kIterators] = new IdMap()
+    this[kRequests] = new IdMap()
+    this[kRetry] = !!retry
+    this[kEncode] = lpstream.encode()
     this[kRemote] = _remote || null
-    this._streaming = null
-    this._ref = null
-    this._db = null
+    this[kRpcStream] = null
+    this[kRef] = null
+    this[kDb] = null
     this[kExplicitClose] = false
   }
 
@@ -44,15 +56,15 @@ class ManyLevelGuest extends AbstractLevel {
   }
 
   createRpcStream (opts, proxy) {
-    if (this._streaming) {
+    if (this[kRpcStream]) {
       throw new Error('Only one rpc stream can be active')
     }
 
     if (!opts) opts = {}
-    this._ref = opts.ref || null
+    this[kRef] = opts.ref || null
 
     const self = this
-    const encode = this._encode
+    const encode = this[kEncode]
     const decode = lpstream.decode()
 
     decode.on('data', function (data) {
@@ -92,7 +104,7 @@ class ManyLevelGuest extends AbstractLevel {
           break
       }
 
-      self._flushMaybe()
+      self[kFlushed]()
     })
 
     // TODO: replace length-prefixed-stream with an already-duplex stream
@@ -100,53 +112,53 @@ class ManyLevelGuest extends AbstractLevel {
     proxy.setWritable(decode)
     proxy.setReadable(encode)
     eos(proxy, cleanup)
-    this._streaming = proxy
+    this[kRpcStream] = proxy
     return proxy
 
     function cleanup () {
-      self._streaming = null
-      self._encode = lpstream.encode()
+      self[kRpcStream] = null
+      self[kEncode] = lpstream.encode()
 
-      if (!self._retry) {
+      if (!self[kRetry]) {
         self[kAbortRequests]('Connection to leader lost', 'LEVEL_CONNECTION_LOST')
-        self._flushMaybe()
+        self[kFlushed]()
         return
       }
 
-      for (const req of self._requests.values()) {
-        self._write(req)
+      for (const req of self[kRequests].values()) {
+        self[kWrite](req)
       }
 
-      for (const ite of self._iterators.values()) {
-        ite.options = ite.iterator._options
-        self._write(ite)
+      for (const ite of self[kIterators].values()) {
+        ite.options = ite.iterator[kOptions]
+        self[kWrite](ite)
       }
     }
 
     function oniteratordata (res) {
-      const req = self._iterators.get(res.id)
+      const req = self[kIterators].get(res.id)
       if (!req) return
-      req.pending.push(res)
-      if (req.callback) req.iterator._next(req.callback)
+      req.iterator[kPending].push(res)
+      if (req.iterator[kCallback]) req.iterator._next(req.iterator[kCallback])
     }
 
     function oniteratorend (res) {
-      const req = self._iterators.get(res.id)
+      const req = self[kIterators].get(res.id)
       if (!req) return
       // https://github.com/Level/abstract-level/issues/19
       req.iterator[kEnded] = true
-      if (req.callback) req.iterator._next(req.callback)
+      if (req.iterator[kCallback]) req.iterator._next(req.iterator[kCallback])
     }
 
     function oncallback (res) {
-      const req = self._requests.remove(res.id)
+      const req = self[kRequests].remove(res.id)
       if (!req) return
       if (res.error) req.callback(new ModuleError('Could not get value', { code: res.error }))
       else req.callback(null, normalizeValue(res.value))
     }
 
     function ongetmanycallback (res) {
-      const req = self._requests.remove(res.id)
+      const req = self[kRequests].remove(res.id)
       if (!req) return
       if (res.error) req.callback(new ModuleError('Could not get values', { code: res.error }))
       else req.callback(null, res.values.map(v => normalizeValue(v.value)))
@@ -158,52 +170,51 @@ class ManyLevelGuest extends AbstractLevel {
     return this.createRpcStream(...args)
   }
 
-  forward (db2) {
-    // We forward calls to the private API of db2, so it must support 'buffer'
+  forward (db) {
+    // We forward calls to the private API of db, so it must support 'buffer'
     for (const enc of ['keyEncoding', 'valueEncoding']) {
-      if (db2[enc]('buffer').name !== 'buffer') {
+      if (db[enc]('buffer').name !== 'buffer') {
         throw new ModuleError(`Database must support non-transcoded 'buffer' ${enc}`, {
           code: 'LEVEL_ENCODING_NOT_SUPPORTED'
         })
       }
     }
 
-    this._db = db2
+    this[kDb] = db
   }
 
   isFlushed () {
-    return !this._requests.size && !this._iterators.size
+    return this[kRequests].size === 0 && this[kIterators].size === 0
   }
 
-  // TODO: use symbols
-  _flushMaybe () {
+  [kFlushed] () {
     if (!this.isFlushed()) return
     this.emit('flush')
-    unref(this._ref)
+    unref(this[kRef])
   }
 
   [kAbortRequests] (msg, code) {
-    for (const req of this._requests.clear()) {
+    for (const req of this[kRequests].clear()) {
       req.callback(new ModuleError(msg, { code }))
     }
 
-    for (const ite of this._iterators.clear()) {
+    for (const req of this[kIterators].clear()) {
       // Cancel in-flight operation if any
-      const callback = ite.callback
-      ite.callback = null
+      const callback = req.iterator[kCallback]
+      req.iterator[kCallback] = null
 
       if (callback) {
         callback(new ModuleError(msg, { code }))
       }
 
       // Note: an in-flight operation would block close()
-      ite.iterator.close(noop)
+      req.iterator.close(noop)
     }
   }
 
   _get (key, opts, cb) {
-    // TODO: this and other methods assume _db state matches our state
-    if (this._db) return this._db._get(key, opts, cb)
+    // TODO: this and other methods assume db state matches our state
+    if (this[kDb]) return this[kDb]._get(key, opts, cb)
 
     const req = {
       tag: input.get,
@@ -212,12 +223,12 @@ class ManyLevelGuest extends AbstractLevel {
       callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
   _getMany (keys, opts, cb) {
-    if (this._db) return this._db._getMany(keys, opts, cb)
+    if (this[kDb]) return this[kDb]._getMany(keys, opts, cb)
 
     const req = {
       tag: input.getMany,
@@ -226,12 +237,12 @@ class ManyLevelGuest extends AbstractLevel {
       callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
   _put (key, value, opts, cb) {
-    if (this._db) return this._db._put(key, value, opts, cb)
+    if (this[kDb]) return this[kDb]._put(key, value, opts, cb)
 
     const req = {
       tag: input.put,
@@ -241,12 +252,12 @@ class ManyLevelGuest extends AbstractLevel {
       callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
   _del (key, opts, cb) {
-    if (this._db) return this._db._del(key, opts, cb)
+    if (this[kDb]) return this[kDb]._del(key, opts, cb)
 
     const req = {
       tag: input.del,
@@ -255,12 +266,12 @@ class ManyLevelGuest extends AbstractLevel {
       callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
   _batch (batch, opts, cb) {
-    if (this._db) return this._db._batch(batch, opts, cb)
+    if (this[kDb]) return this[kDb]._batch(batch, opts, cb)
 
     const req = {
       tag: input.batch,
@@ -269,47 +280,47 @@ class ManyLevelGuest extends AbstractLevel {
       callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
   _clear (opts, cb) {
-    if (this._db) return this._db._clear(opts, cb)
+    if (this[kDb]) return this[kDb]._clear(opts, cb)
 
     const req = {
       tag: input.clear,
       id: 0,
       options: opts,
-      callback: cb || noop
+      callback: cb
     }
 
-    req.id = this._requests.add(req)
-    this._write(req)
+    req.id = this[kRequests].add(req)
+    this[kWrite](req)
   }
 
-  _write (req) {
-    if (this._requests.size + this._iterators.size === 1) ref(this._ref)
+  [kWrite] (req) {
+    if (this[kRequests].size + this[kIterators].size === 1) ref(this[kRef])
     const enc = input.encoding(req.tag)
     const buf = Buffer.allocUnsafe(enc.encodingLength(req) + 1)
     buf[0] = req.tag
     enc.encode(req, buf, 1)
-    this._encode.write(buf)
+    this[kEncode].write(buf)
   }
 
   _close (cb) {
-    if (this._db) return this._db._close(cb)
+    if (this[kDb]) return this[kDb]._close(cb)
 
     this[kExplicitClose] = true
     this[kAbortRequests]('Aborted on database close()', 'LEVEL_DATABASE_NOT_OPEN')
 
-    if (this._streaming) {
-      // _streaming could be a socket and emit 'close' with a
+    if (this[kRpcStream]) {
+      // kRpcStream could be a socket and emit 'close' with a
       // hadError argument. Ignore that argument.
-      this._streaming.once('close', () => {
-        this._streaming = null
+      this[kRpcStream].once('close', () => {
+        this[kRpcStream] = null
         cb()
       })
-      this._streaming.destroy()
+      this[kRpcStream].destroy()
     } else {
       this.nextTick(cb)
     }
@@ -331,9 +342,9 @@ class ManyLevelGuest extends AbstractLevel {
   }
 
   iterator (options) {
-    if (this._db) {
-      // TODO: this is 3x faster. Why?
-      return this._db.iterator(options)
+    if (this[kDb]) {
+      // TODO: this is 3x faster than doing it in _iterator(). Why?
+      return this[kDb].iterator(options)
     } else {
       return AbstractLevel.prototype.iterator.call(this, options)
     }
@@ -352,71 +363,59 @@ class Iterator extends AbstractIterator {
     // Avoid spread operator because of https://bugs.chromium.org/p/chromium/issues/detail?id=1204540
     super(db, Object.assign({}, options, { abortOnClose: true }))
 
-    this._options = options
-
-    const req = {
-      tag: input.iterator,
-      id: 0,
-      pending: [],
-      iterator: this,
-      options: options,
-      callback: null
-    }
-
-    req.id = this.db._iterators.add(req)
-
-    this[kAckMessage] = {
-      tag: input.iteratorAck,
-      id: req.id
-    }
-
-    // TODO: use symbols
-    this._req = req
+    this[kOptions] = options
     this[kEnded] = false
-    this.db._write(req)
+    this[kPending] = []
+    this[kCallback] = null
+    this[kRequest] = { tag: input.iterator, id: 0, iterator: this, options }
+    this[kRequest].id = this.db[kIterators].add(this[kRequest])
+    this[kAckMessage] = { tag: input.iteratorAck, id: this[kRequest].id }
+
+    this.db[kWrite](this[kRequest])
   }
 
   // TODO: implement optimized `nextv()`
   _next (callback) {
-    this._req.callback = null
+    this[kCallback] = null
 
-    if (this._req.pending.length !== 0) {
-      const next = this._req.pending[0]
+    if (this[kPending].length !== 0) {
+      const next = this[kPending][0]
 
       // TODO: make new request if next() is called again
       if (next.error) {
-        this._req.pending.shift()
+        this[kPending].shift()
         return this.nextTick(callback, new ModuleError('Could not read entry', {
           code: next.error
         }))
       }
 
-      const key = this._options.keys ? next.data.shift() : undefined
-      const val = this._options.values ? next.data.shift() : undefined
+      const key = this[kOptions].keys ? next.data.shift() : undefined
+      const val = this[kOptions].values ? next.data.shift() : undefined
 
       // Acknowledge receipt
       if (next.data.length === 0) {
-        this._req.pending.shift()
-        this.db._write(this[kAckMessage])
+        this[kPending].shift()
+        this.db[kWrite](this[kAckMessage])
       }
 
       // TODO: the keys option must be true if retry is enabled
-      this._options.gt = key
-      this._options.gte = null
-      if (this._options.limit > 0) this._options.limit--
+      // TODO: set lt(e) in reverse mode
+      this[kOptions].gt = key
+      this[kOptions].gte = null
+      if (this[kOptions].limit > 0) this[kOptions].limit--
 
       this.nextTick(callback, undefined, key, val)
     } else if (this[kEnded]) {
       this.nextTick(callback)
     } else {
-      this._req.callback = callback
+      this[kCallback] = callback
     }
   }
 
   _close (cb) {
-    this.db._write({ tag: input.iteratorClose, id: this._req.id })
-    this.db._iterators.remove(this._req.id)
-    this.db._flushMaybe()
+    this.db[kWrite]({ tag: input.iteratorClose, id: this[kRequest].id })
+    this.db[kIterators].remove(this[kRequest].id)
+    this.db[kFlushed]()
     this.nextTick(cb)
   }
 }

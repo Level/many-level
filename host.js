@@ -4,7 +4,6 @@ const lpstream = require('length-prefixed-stream')
 const ModuleError = require('module-error')
 const eos = require('end-of-stream')
 const duplexify = require('duplexify')
-const messages = require('./messages')
 const { input, output } = require('./tags')
 
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
@@ -20,6 +19,10 @@ const kPendingAcks = Symbol('pendingAcks')
 const kDataMessage = Symbol('dataMessage')
 const kEndMessage = Symbol('endMessage')
 const kHandleMany = Symbol('handleMany')
+const kIterator = Symbol('iterator')
+const kEncode = Symbol('encode')
+const kMode = Symbol('mode')
+const kBusy = Symbol('busy')
 const noop = () => {}
 
 // TODO: make use of db.supports manifest
@@ -118,18 +121,12 @@ function createRpcStream (db, options, streamOptions) {
 
     function callback (id, err, value) {
       const msg = { id, error: errorCode(err), value }
-      const buf = Buffer.allocUnsafe(messages.Callback.encodingLength(msg) + 1)
-      buf[0] = output.callback
-      messages.Callback.encode(msg, buf, 1)
-      encode.write(buf)
+      encode.write(encodeMessage(msg, output.callback))
     }
 
     function getManyCallback (id, err, values) {
       const msg = { id, error: errorCode(err), values }
-      const buf = Buffer.allocUnsafe(messages.GetManyCallback.encodingLength(msg) + 1)
-      buf[0] = output.getManyCallback
-      messages.GetManyCallback.encode(msg, buf, 1)
-      encode.write(buf)
+      encode.write(encodeMessage(msg, output.getManyCallback))
     }
 
     function onput (req) {
@@ -210,11 +207,10 @@ function createRpcStream (db, options, streamOptions) {
 
 class Iterator {
   constructor (db, req, encode) {
-    // TODO: use symbols
-    this._mode = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
-    this._iterator = db[this._mode](cleanRangeOptions(req.options))
-    this._encode = encode
-    this._nexting = false
+    this[kMode] = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
+    this[kIterator] = db[this[kMode]](cleanRangeOptions(req.options))
+    this[kEncode] = encode
+    this[kBusy] = false
     this[kMaxItemLength] = 1
     this[kPendingAcks] = 0
     this[kEnded] = false
@@ -226,7 +222,7 @@ class Iterator {
   }
 
   next () {
-    if (this._nexting || this[kClosed]) return
+    if (this[kBusy] || this[kClosed]) return
     if (this[kEnded] || this[kPendingAcks] > 1) return
 
     if (this[kSize] === 0) {
@@ -234,25 +230,25 @@ class Iterator {
       this[kSize] = 1
     } else {
       // Fill the stream's internal buffer
-      const room = Math.max(1, this._encode.writableHighWaterMark - this._encode.writableLength)
+      const room = Math.max(1, this[kEncode].writableHighWaterMark - this[kEncode].writableLength)
       this[kSize] = Math.max(32, Math.round(room / this[kMaxItemLength]))
     }
 
-    this._nexting = true
-    this._iterator.nextv(this[kSize], this[kHandleMany])
+    this[kBusy] = true
+    this[kIterator].nextv(this[kSize], this[kHandleMany])
   }
 
   [kHandleMany] (err, items) {
-    this._nexting = false
+    this[kBusy] = false
 
     if (err) {
       const data = { id: this[kDataMessage].id, error: errorCode(err) }
-      this._encode.write(encodeMessage(data, output.iteratorError))
+      this[kEncode].write(encodeMessage(data, output.iteratorError))
     } else if (items.length === 0) {
       this[kEnded] = true
-      this._encode.write(encodeMessage(this[kEndMessage], output.iteratorEnd))
+      this[kEncode].write(encodeMessage(this[kEndMessage], output.iteratorEnd))
     } else {
-      if (this._mode === 'iterator') {
+      if (this[kMode] === 'iterator') {
         const data = this[kDataMessage].data = new Array(items.length * 2)
         let n = 0
 
@@ -267,8 +263,7 @@ class Iterator {
       const buf = encodeMessage(this[kDataMessage], output.iteratorData)
       const estimatedItemLength = Math.ceil(buf.length / items.length)
 
-      this._encode.write(buf)
-
+      this[kEncode].write(buf)
       this[kMaxItemLength] = Math.max(this[kMaxItemLength], estimatedItemLength)
       this[kPendingAcks]++
 
@@ -280,7 +275,7 @@ class Iterator {
   close () {
     if (this[kClosed]) return
     this[kClosed] = true
-    this._iterator.close(noop)
+    this[kIterator].close(noop)
   }
 }
 
