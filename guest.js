@@ -358,6 +358,9 @@ exports.ManyLevelGuest = ManyLevelGuest
 
 class Iterator extends AbstractIterator {
   constructor (db, options) {
+    // Need keys to know where to restart
+    if (db[kRetry]) options.keys = true
+
     // Avoid spread operator because of https://bugs.chromium.org/p/chromium/issues/detail?id=1204540
     super(db, Object.assign({}, options, { abortOnClose: true }))
 
@@ -450,7 +453,6 @@ class Iterator extends AbstractIterator {
       // Once we've consumed the result of a seek() it must not get retried
       req.seek = null
 
-      // TODO: the keys option must be true if retry is enabled
       if (this.db[kRetry]) {
         req.bookmark = key
       }

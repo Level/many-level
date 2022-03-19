@@ -194,6 +194,48 @@ for (const reverse of [false, true]) {
   })
 }
 
+tape('retry value iterator', async function (t) {
+  const db = new MemoryLevel()
+  const client = manylevel.client({ retry: true, valueEncoding: 'json' })
+  const keys = ['a', 'b', 'c', 'd']
+
+  let done = false
+  let attempts = 0
+  let local
+
+  await db.batch(keys.map((key, value) => {
+    return { type: 'put', key, value }
+  }))
+
+  ;(function connect () {
+    if (done) return
+    attempts++
+    const remote = manylevel.server(db)
+    local = client.connect()
+    pipeline(remote, local, remote, connect)
+  })()
+
+  // Wait for first connection
+  await client.get('a')
+
+  const result = []
+  const it = client.values()
+
+  while (true) {
+    local.destroy()
+    local = null
+    const value = await it.next()
+    if (value === undefined) break
+    result.push(value)
+  }
+
+  done = true
+  await it.close()
+
+  t.same(result, [0, 1, 2, 3])
+  t.ok(attempts > 1, `reconnected ${attempts} times`)
+})
+
 for (const reverse of [false, true]) {
   tape(`retry iterator with a seek() that skips keys (reverse: ${reverse})`, async function (t) {
     const db = new MemoryLevel()
