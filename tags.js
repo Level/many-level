@@ -11,7 +11,8 @@ const INPUT = [
   messages.Clear,
   messages.GetMany,
   messages.IteratorClose,
-  messages.IteratorAck
+  messages.IteratorAck,
+  messages.IteratorSeek
 ]
 
 const OUTPUT = [
@@ -32,6 +33,7 @@ exports.input = {
   getMany: 6,
   iteratorClose: 7,
   iteratorAck: 8,
+  iteratorSeek: 9,
 
   encoding (tag) {
     return INPUT[tag]

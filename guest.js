@@ -21,10 +21,11 @@ const kRetry = Symbol('retry')
 const kRpcStream = Symbol('rpcStream')
 const kFlushed = Symbol('flushed')
 const kWrite = Symbol('write')
-const kOptions = Symbol('options')
 const kRequest = Symbol('request')
 const kPending = Symbol('pending')
 const kCallback = Symbol('callback')
+const kSeq = Symbol('seq')
+const kErrored = Symbol('errored')
 const noop = function () {}
 
 class ManyLevelGuest extends AbstractLevel {
@@ -35,7 +36,7 @@ class ManyLevelGuest extends AbstractLevel {
       encodings: { buffer: true },
       snapshots: !retry,
       permanence: true,
-      seek: false,
+      seek: true,
       createIfMissing: false,
       errorIfExists: false
     }, forward)
@@ -128,22 +129,21 @@ class ManyLevelGuest extends AbstractLevel {
         self[kWrite](req)
       }
 
-      for (const ite of self[kIterators].values()) {
-        ite.options = ite.iterator[kOptions]
-        self[kWrite](ite)
+      for (const req of self[kIterators].values()) {
+        self[kWrite](req)
       }
     }
 
     function oniteratordata (res) {
       const req = self[kIterators].get(res.id)
-      if (!req) return
+      if (!req || req.iterator[kSeq] !== res.seq) return
       req.iterator[kPending].push(res)
       if (req.iterator[kCallback]) req.iterator._next(req.iterator[kCallback])
     }
 
     function oniteratorend (res) {
       const req = self[kIterators].get(res.id)
-      if (!req) return
+      if (!req || req.iterator[kSeq] !== res.seq) return
       // https://github.com/Level/abstract-level/issues/19
       req.iterator[kEnded] = true
       if (req.iterator[kCallback]) req.iterator._next(req.iterator[kCallback])
@@ -356,52 +356,104 @@ class ManyLevelGuest extends AbstractLevel {
 
 exports.ManyLevelGuest = ManyLevelGuest
 
-// TODO: support seek
 class Iterator extends AbstractIterator {
   constructor (db, options) {
     // Avoid spread operator because of https://bugs.chromium.org/p/chromium/issues/detail?id=1204540
     super(db, Object.assign({}, options, { abortOnClose: true }))
 
-    this[kOptions] = options
     this[kEnded] = false
+    this[kErrored] = false
     this[kPending] = []
     this[kCallback] = null
-    this[kRequest] = { tag: input.iterator, id: 0, iterator: this, options }
-    this[kRequest].id = this.db[kIterators].add(this[kRequest])
-    this[kAckMessage] = { tag: input.iteratorAck, id: this[kRequest].id }
+    this[kSeq] = 0
 
-    this.db[kWrite](this[kRequest])
+    const req = this[kRequest] = {
+      tag: input.iterator,
+      id: 0,
+      seq: 0,
+      iterator: this,
+      options,
+      consumed: 0,
+      bookmark: null,
+      seek: null
+    }
+
+    const ack = this[kAckMessage] = {
+      tag: input.iteratorAck,
+      id: 0,
+      seq: 0,
+      consumed: 0
+    }
+
+    req.id = this.db[kIterators].add(req)
+    ack.id = req.id
+
+    this.db[kWrite](req)
+  }
+
+  _seek (target, options) {
+    if (this[kErrored]) return
+
+    this[kPending] = []
+    this[kEnded] = false
+
+    // Ignore previous (in-flight) data
+    this[kRequest].seq = ++this[kSeq]
+    this[kAckMessage].seq = this[kRequest].seq
+
+    // For retries
+    this[kRequest].seek = target
+    this[kRequest].bookmark = null
+
+    this.db[kWrite]({
+      tag: input.iteratorSeek,
+      id: this[kRequest].id,
+      seq: this[kRequest].seq,
+      target
+    })
   }
 
   // TODO: implement optimized `nextv()`
   _next (callback) {
     this[kCallback] = null
 
-    if (this[kPending].length !== 0) {
+    if (this[kRequest].consumed >= this.limit || this[kErrored]) {
+      this.nextTick(callback)
+    } else if (this[kPending].length !== 0) {
       const next = this[kPending][0]
+      const req = this[kRequest]
 
-      // TODO: make new request if next() is called again
+      // TODO: document that error ends the iterator
       if (next.error) {
-        this[kPending].shift()
+        this[kErrored] = true
+        this[kPending] = []
+
         return this.nextTick(callback, new ModuleError('Could not read entry', {
           code: next.error
         }))
       }
 
-      const key = this[kOptions].keys ? next.data.shift() : undefined
-      const val = this[kOptions].values ? next.data.shift() : undefined
+      const consumed = ++req.consumed
+      const key = req.options.keys ? next.data.shift() : undefined
+      const val = req.options.values ? next.data.shift() : undefined
 
-      // Acknowledge receipt
       if (next.data.length === 0) {
         this[kPending].shift()
-        this.db[kWrite](this[kAckMessage])
+
+        // Acknowledge receipt. Not needed if we don't want more data.
+        if (consumed < this.limit) {
+          this[kAckMessage].consumed = consumed
+          this.db[kWrite](this[kAckMessage])
+        }
       }
 
+      // Once we've consumed the result of a seek() it must not get retried
+      req.seek = null
+
       // TODO: the keys option must be true if retry is enabled
-      // TODO: set lt(e) in reverse mode
-      this[kOptions].gt = key
-      this[kOptions].gte = null
-      if (this[kOptions].limit > 0) this[kOptions].limit--
+      if (this.db[kRetry]) {
+        req.bookmark = key
+      }
 
       this.nextTick(callback, undefined, key, val)
     } else if (this[kEnded]) {

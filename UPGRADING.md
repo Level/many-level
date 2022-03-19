@@ -6,6 +6,12 @@ This document describes breaking changes and how to upgrade. For a complete list
 
 _WIP notes_
 
+### What's new
+
+- Throughput of iterators has doubled
+- Supports `iterator.seek()`
+- Reverse iterators support retry
+
 ### Changes to initialization
 
 We started using classes, which means using `new` is now required. The server/client roles are now called host/guest. If you previously did:

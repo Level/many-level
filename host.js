@@ -13,9 +13,7 @@ const kEnded = Symbol('ended')
 const kClosed = Symbol('closed')
 const kDb = Symbol('db')
 const kOptions = Symbol('options')
-const kSize = Symbol('size')
 const kMaxItemLength = Symbol('maxItemLength')
-const kPendingAcks = Symbol('pendingAcks')
 const kDataMessage = Symbol('dataMessage')
 const kEndMessage = Symbol('endMessage')
 const kHandleMany = Symbol('handleMany')
@@ -23,7 +21,11 @@ const kIterator = Symbol('iterator')
 const kEncode = Symbol('encode')
 const kMode = Symbol('mode')
 const kBusy = Symbol('busy')
+const kPendingSeek = Symbol('pendingSeek')
+const kLimit = Symbol('limit')
+const kReadAhead = Symbol('readAhead')
 const noop = () => {}
+const limbo = Symbol('limbo')
 
 // TODO: make use of db.supports manifest
 class ManyLevelHost {
@@ -114,6 +116,7 @@ function createRpcStream (db, options, streamOptions) {
         case input.iterator: return oniterator(req)
         case input.iteratorClose: return oniteratorclose(req)
         case input.iteratorAck: return oniteratorack(req)
+        case input.iteratorSeek: return oniteratorseek(req)
         case input.clear: return readonly ? onreadonly(req) : onclear(req)
         case input.getMany: return ongetmany(req)
       }
@@ -173,27 +176,39 @@ function createRpcStream (db, options, streamOptions) {
       })
     }
 
-    function oniterator (req) {
-      let prev = iterators.get(req.id)
+    function oniterator ({ id, seq, options, consumed, bookmark, seek }) {
+      if (iterators.has(id)) return
 
-      if (prev === undefined) {
-        prev = new Iterator(db, req, encode)
-        iterators.set(req.id, prev)
+      const it = new Iterator(db, id, seq, options, consumed, encode)
+      iterators.set(id, it)
+
+      if (seek) {
+        it.seek(seek, seq)
+      } else if (bookmark) {
+        // Restart where previous iterator left off
+        it.seek(nextTarget(bookmark, options.reverse), seq)
+      } else {
+        it.next(true)
       }
-
-      prev.next()
     }
 
-    function oniteratorack (req) {
-      const it = iterators.get(req.id)
+    function oniteratorack ({ id, seq, consumed }) {
+      const it = iterators.get(id)
+      if (it === undefined || it.seq !== seq) return
+      it.pendingAcks = Math.max(0, it.pendingAcks - 1)
+      it.consumed = Math.max(it.consumed, consumed)
+      it.next(false)
+    }
+
+    function oniteratorseek ({ id, target, seq }) {
+      const it = iterators.get(id)
       if (it === undefined) return
-      it[kPendingAcks] = Math.max(0, it[kPendingAcks] - 1)
-      it.next()
+      it.seek(target, seq)
     }
 
-    function oniteratorclose (req) {
-      const it = iterators.get(req.id)
-      iterators.delete(req.id)
+    function oniteratorclose ({ id }) {
+      const it = iterators.get(id)
+      iterators.delete(id)
       if (it !== undefined) it.close()
     }
 
@@ -206,48 +221,102 @@ function createRpcStream (db, options, streamOptions) {
 }
 
 class Iterator {
-  constructor (db, req, encode) {
-    this[kMode] = req.options.keys && req.options.values ? 'iterator' : req.options.keys ? 'keys' : 'values'
-    this[kIterator] = db[this[kMode]](cleanRangeOptions(req.options))
+  constructor (db, id, seq, options, consumed, encode) {
+    options = cleanRangeOptions(options)
+
+    // Because we read ahead (and can seek) we must do the limiting
+    const limit = options.limit
+    options.limit = Infinity
+
+    this[kMode] = options.keys && options.values ? 'iterator' : options.keys ? 'keys' : 'values'
+    this[kIterator] = db[this[kMode]](options)
+    this[kLimit] = limit < 0 ? Infinity : limit
     this[kEncode] = encode
     this[kBusy] = false
     this[kMaxItemLength] = 1
-    this[kPendingAcks] = 0
     this[kEnded] = false
     this[kClosed] = false
-    this[kSize] = 0
-    this[kDataMessage] = { id: req.id, data: [] }
-    this[kEndMessage] = { id: req.id }
+    this[kDataMessage] = { id, data: [], seq }
+    this[kEndMessage] = { id, seq }
     this[kHandleMany] = this[kHandleMany].bind(this)
+    this[kPendingSeek] = null
+
+    this.seq = seq
+    this.consumed = consumed
+    this.pendingAcks = 0
   }
 
-  next () {
+  next (first) {
     if (this[kBusy] || this[kClosed]) return
-    if (this[kEnded] || this[kPendingAcks] > 1) return
+    if (this[kEnded] || this.pendingAcks > 1) return
 
-    if (this[kSize] === 0) {
+    // If limited, don't read more than that minus what the guest has consumed
+    let size = this[kLimit] - this.consumed
+
+    if (first) {
       // Only want 1 entry initially, for early termination use cases
-      this[kSize] = 1
+      size = Math.min(1, size)
+      this[kReadAhead] = false
     } else {
       // Fill the stream's internal buffer
-      const room = Math.max(1, this[kEncode].writableHighWaterMark - this[kEncode].writableLength)
-      this[kSize] = Math.max(32, Math.round(room / this[kMaxItemLength]))
+      const ws = this[kEncode]
+      const room = Math.max(1, ws.writableHighWaterMark - ws.writableLength)
+      size = Math.min(size, Math.max(16, Math.round(room / this[kMaxItemLength])))
+      this[kReadAhead] = true
     }
 
     this[kBusy] = true
-    this[kIterator].nextv(this[kSize], this[kHandleMany])
+
+    if (size <= 0) {
+      process.nextTick(this[kHandleMany], null, [])
+    } else {
+      this[kIterator].nextv(size, this[kHandleMany])
+    }
+  }
+
+  seek (target, seq) {
+    if (this[kClosed]) {
+      // Ignore request
+    } else if (this[kBusy]) {
+      this[kPendingSeek] = [target, seq]
+    } else {
+      this[kPendingSeek] = null
+      this[kEnded] = false
+      this.seq = seq
+      this.pendingAcks = 0
+
+      if (target === limbo) {
+        this[kBusy] = true
+        process.nextTick(this[kHandleMany], null, [])
+      } else {
+        this[kIterator].seek(target, encodingOptions)
+        this.next(true)
+      }
+    }
   }
 
   [kHandleMany] (err, items) {
     this[kBusy] = false
 
-    if (err) {
-      const data = { id: this[kDataMessage].id, error: errorCode(err) }
+    if (this[kClosed]) {
+      // Ignore result
+    } else if (this[kPendingSeek] !== null) {
+      this.seek(...this[kPendingSeek])
+    } else if (err) {
+      const data = {
+        id: this[kDataMessage].id,
+        error: errorCode(err),
+        seq: this.seq
+      }
+
       this[kEncode].write(encodeMessage(data, output.iteratorError))
     } else if (items.length === 0) {
       this[kEnded] = true
+      this[kEndMessage].seq = this.seq
       this[kEncode].write(encodeMessage(this[kEndMessage], output.iteratorEnd))
     } else {
+      this[kDataMessage].seq = this.seq
+
       if (this[kMode] === 'iterator') {
         const data = this[kDataMessage].data = new Array(items.length * 2)
         let n = 0
@@ -265,10 +334,11 @@ class Iterator {
 
       this[kEncode].write(buf)
       this[kMaxItemLength] = Math.max(this[kMaxItemLength], estimatedItemLength)
-      this[kPendingAcks]++
+      this.pendingAcks++
 
-      // Read ahead
-      this.next()
+      if (this[kReadAhead]) {
+        this.next(false)
+      }
     }
   }
 
@@ -285,6 +355,23 @@ function encodeMessage (msg, tag) {
   buf[0] = tag
   encoding.encode(msg, buf, 1)
   return buf
+}
+
+// Adjust one byte so that we land on the key after target
+function nextTarget (target, reverse) {
+  if (!reverse) {
+    const copy = Buffer.allocUnsafe(target.length + 1)
+    target.copy(copy, 0, 0, target.length)
+    copy[target.length] = 0
+    return copy
+  } else if (target.length === 0) {
+    return limbo
+  } else if (target[target.length - 1] > 0) {
+    target[target.length - 1]--
+    return target
+  } else {
+    return target.slice(0, target.length - 1)
+  }
 }
 
 function errorCode (err) {

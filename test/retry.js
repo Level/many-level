@@ -71,66 +71,231 @@ tape('retry get', function (t) {
   })
 })
 
-tape('retry iterator with gte option', async function (t) {
-  t.plan(3)
+for (const reverse of [false, true]) {
+  tape(`retry iterator with gte (reverse: ${reverse})`, async function (t) {
+    const db = new MemoryLevel()
+    const entryCount = 1e4
+    const padding = 5
+    const client = manylevel.client({ retry: true })
 
-  const db = new MemoryLevel()
-  const entryCount = 1e4
-  const padding = 5
-  const client = manylevel.client({
-    retry: true
-  })
+    let done = false
+    let attempts = 0
+    let n = 0
 
-  let done = false
-  let attempts = 0
-  let n = 0
+    await db.batch(new Array(entryCount).fill(null).map((_, i) => {
+      return { type: 'put', key: String(i).padStart(padding, '0'), value: String(i) }
+    }))
 
-  await db.batch(new Array(entryCount).fill(null).map((_, i) => {
-    return { type: 'put', key: String(i).padStart(padding, '0'), value: String(i) }
-  }))
+    // Don't test deferredOpen
+    await client.open()
 
-  // Don't test deferredOpen
-  await client.open()
+    // Artificially slow down iterators
+    const original = db._iterator
+    db._iterator = function (options) {
+      const it = original.call(this, options)
+      const nextv = it._nextv
 
-  // Artificially slow down iterators
-  const original = db._iterator
-  db._iterator = function (options) {
-    const it = original.call(this, options)
-    const nextv = it._nextv
+      it._nextv = function (size, options, cb) {
+        if (n++ > entryCount * 10) throw new Error('Infinite loop')
 
-    it._nextv = function (size, options, cb) {
-      if (n++ > entryCount * 10) throw new Error('Infinite loop')
+        nextv.call(this, size, options, (...args) => {
+          setTimeout(cb.bind(null, ...args), 10)
+        })
+      }
 
-      nextv.call(this, size, options, (...args) => {
-        setTimeout(cb.bind(null, ...args), 10)
-      })
+      return it
     }
 
-    return it
-  }
+    // (Re)connect every 50ms
+    ;(function connect () {
+      if (done) return
 
-  // (Re)connect every 50ms
-  ;(function connect () {
-    if (done) return
+      attempts++
 
-    attempts++
+      const remote = manylevel.server(db)
+      const local = client.connect()
 
-    const remote = manylevel.server(db)
-    const local = client.connect()
+      // TODO: calls back too soon if you destroy remote instead of local,
+      // because duplexify does not satisfy node's willEmitClose() check
+      pipeline(remote, local, remote, connect)
+      setTimeout(local.destroy.bind(local), 50)
+    })()
 
-    // TODO: calls back too soon if you destroy remote instead of local,
-    // because duplexify does not satisfy node's willEmitClose() check
-    pipeline(remote, local, remote, connect)
-    setTimeout(local.destroy.bind(local), 50)
-  })()
+    const entries = await client.iterator({ gte: '1'.padStart(padding, '0'), reverse }).all()
+    done = true
 
-  const entries = await client.iterator({ gte: '1'.padStart(padding, '0') }).all()
-  done = true
+    t.is(entries.length, entryCount - 1)
+    if (reverse) entries.reverse()
+    t.ok(entries.every((e, index) => parseInt(e[0], 10) === index + 1))
+    t.ok(attempts > 1, `reconnected ${attempts} times`)
+  })
+}
 
-  t.is(entries.length, entryCount - 1)
-  t.ok(entries.every((e, index) => parseInt(e[0], 10) === index + 1))
-  t.ok(attempts > 1, `reconnected ${attempts} times`)
-})
+for (const reverse of [false, true]) {
+  tape(`retry iterator with bytes (reverse: ${reverse})`, async function (t) {
+    const db = new MemoryLevel()
+    const client = manylevel.client({
+      retry: true,
+      keyEncoding: 'buffer'
+    })
+
+    let done = false
+    let attempts = 0
+    let local
+
+    const keys = [
+      Buffer.alloc(0),
+      Buffer.from([0]),
+      Buffer.from([1]),
+      Buffer.from([1, 0]),
+      Buffer.from([1, 0, 0]),
+      Buffer.from([1, 0, 254]),
+      Buffer.from([1, 0, 255]),
+      Buffer.from([1, 1, 0]),
+      Buffer.from([255]),
+      Buffer.from([255, 0]),
+      Buffer.from([255, 255])
+    ]
+
+    await db.batch(keys.map((key, i) => {
+      return { type: 'put', key, value: String(i) }
+    }))
+
+    // Don't test deferredOpen
+    await client.open()
+
+    ;(function connect () {
+      if (done) return
+      attempts++
+      const remote = manylevel.server(db)
+      local = client.connect()
+      pipeline(remote, local, remote, connect)
+    })()
+
+    // Wait for first connection
+    await client.get(Buffer.alloc(0))
+
+    const result = []
+    const it = client.keys({ reverse })
+
+    while (true) {
+      local.destroy()
+      local = null
+      const key = await it.next()
+      if (key === undefined) break
+      result.push(key)
+    }
+
+    done = true
+    await it.close()
+
+    t.same(result, reverse ? keys.reverse() : keys)
+    t.ok(attempts > 1, `reconnected ${attempts} times`)
+  })
+}
+
+for (const reverse of [false, true]) {
+  tape(`retry iterator with a seek() that skips keys (reverse: ${reverse})`, async function (t) {
+    const db = new MemoryLevel()
+    const client = manylevel.client({ retry: true })
+
+    let done = false
+    let attempts = 0
+    let local
+
+    await db.batch(new Array(10).fill(null).map((_, i) => {
+      return { type: 'put', key: String(i).padStart(2, '0'), value: 'a' }
+    }))
+
+    // Don't test deferredOpen
+    await client.open()
+
+    ;(function connect () {
+      if (done) return
+      attempts++
+      const remote = manylevel.server(db)
+      local = client.connect()
+      pipeline(remote, local, remote, connect)
+    })()
+
+    const result = []
+    const it = client.keys({ reverse })
+
+    while (true) {
+      let key = await it.next()
+      if (key === undefined) break
+      key = parseInt(key)
+      result.push(key)
+      it.seek(String(key + (reverse ? -2 : 2)).padStart(2, '0'))
+      if (local) local.destroy()
+      local = null
+    }
+
+    done = true
+    await it.close()
+
+    t.same(result, reverse ? [9, 7, 5, 3, 1] : [0, 2, 4, 6, 8])
+    t.ok(attempts > 1, `reconnected ${attempts} times`)
+  })
+}
+
+for (const reverse of [false, true]) {
+  tape(`retry iterator with a seek() that revisits keys (reverse: ${reverse})`, async function (t) {
+    const db = new MemoryLevel()
+    const client = manylevel.client({ retry: true })
+
+    let done = false
+    let attempts = 0
+    let local
+    let revisited = false
+
+    await db.batch(new Array(10).fill(null).map((_, i) => {
+      return { type: 'put', key: String(i), value: String(i) }
+    }))
+
+    // Don't test deferredOpen
+    await client.open()
+
+    ;(function connect () {
+      if (done) return
+      attempts++
+      const remote = manylevel.server(db)
+      local = client.connect()
+      pipeline(remote, local, remote, connect)
+    })()
+
+    const result = []
+    const it = client.keys({ reverse })
+
+    while (true) {
+      let key = await it.next()
+      if (key === undefined) break
+
+      key = parseInt(key)
+      result.push(key)
+
+      if (!revisited) {
+        if (reverse ? key === 5 : key === 4) {
+          revisited = true
+          it.seek(String(reverse ? 9 : 0))
+        }
+      }
+
+      // Keep disconnecting to test that host only seeks once
+      if (local) local.destroy()
+      local = null
+    }
+
+    done = true
+    await it.close()
+
+    t.same(result, reverse
+      ? [9, 8, 7, 6, 5, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+      : [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    )
+    t.ok(attempts > 1, `reconnected ${attempts} times`)
+  })
+}
 
 tape('retry read stream', function (t) {
   const db = new MemoryLevel()

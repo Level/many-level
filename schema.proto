@@ -41,7 +41,11 @@ message Clear {
 
 message Iterator {
   required uint32 id = 1;
-  optional Options options = 2;
+  required uint32 seq = 2;
+  required Options options = 3;
+  required uint64 consumed = 4;
+  optional bytes bookmark = 5;
+  optional bytes seek = 6;
 
   message Options {
     optional bool keys = 1;
@@ -63,20 +67,31 @@ message Callback {
 
 message IteratorData {
   required uint32 id = 1;
-  repeated bytes data = 2;
+  required uint32 seq = 2;
+  repeated bytes data = 3;
 }
 
 message IteratorAck {
   required uint32 id = 1;
+  required uint32 seq = 2;
+  required uint64 consumed = 3;
+}
+
+message IteratorSeek {
+  required uint32 id = 1;
+  required uint32 seq = 2;
+  required bytes target = 3;
 }
 
 message IteratorEnd {
   required uint32 id = 1;
+  required uint32 seq = 2;
 }
 
 message IteratorError {
   required uint32 id = 1;
-  required string error = 2;
+  required uint32 seq = 2;
+  required string error = 3;
 }
 
 message IteratorClose {
