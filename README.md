@@ -15,7 +15,7 @@
 
 ## Usage
 
-Use this module to share an `abstract-level` database across multiple processes or machines. A _host_ exposes a database of choice over binary streams, using compact [Protocol Buffers](https://developers.google.com/protocol-buffers) messages to encode database operations. One or more _guests_ connect to that host and expose it as an `abstract-level` database, as if it is a regular, local database. They support an opt-in seamless retry in order to reconnect to a host without aborting any pending database operations.
+Use this module to share an `abstract-level` database across multiple processes or machines. A _host_ exposes a database of choice over binary streams, using compact [Protocol Buffers](https://developers.google.com/protocol-buffers) messages to encode database operations. One or more _guests_ connect to that host and expose it as an `abstract-level` database, as if it is a regular, local database. They can opt-in to a seamless retry in order to reconnect to a host without aborting any pending database operations.
 
 First create a host and server. The server can be anything that supports binary streams. In this example we'll use a simple TCP server.
 
