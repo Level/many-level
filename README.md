@@ -93,9 +93,9 @@ Create a new host that exposes the given `db`, which must be an `abstract-level`
 The optional `options` object may contain:
 
 - `readonly` (boolean, default `false`): reject write operations like `db.put()`
-- `preput` (function, default none): `function (key, val, cb) {}` called before puts
-- `predel` (function, default none): `function (key, cb) {}` called before dels
-- `prebatch` (function, default none): `function (batch, cb) {}` called before batches.
+- `preput` (function, default none): a `function (key, val, cb) {}` to be called before `db.put()` operations
+- `predel` (function, default none): a `function (key, cb) {}` to be called before `db.del()` operations
+- `prebatch` (function, default none): a `function (operations, cb) {}` to be called before `db.batch()` operations.
 
 #### `hostStream = host.createRpcStream()`
 
@@ -119,7 +119,7 @@ The database opens itself but (unlike other `abstract-level` implementations) ca
 
 Create a duplex guest stream to be piped into a host stream. Until that's done, operations made on `db` are queued up in memory. Will throw if `createRpcStream()` was previously called and that stream has not (yet) closed. The optional `options` object may contain:
 
-- `ref` (object, default `null`): an object to only keep the Node.js event loop alive while there are pending database operations. Should have a `ref()` method to be called on a new operation like `db.get()` and an `unref()` method to be called when all operations have finished (or when the database is closed). A Node.js `net` socket satisfies that interface. The `ref` option is not relevant when `ManyLevelGuest` is used in a browser environment.
+- `ref` (object, default `null`): an object to only keep the Node.js event loop alive while there are pending database operations. Should have a `ref()` method to be called on a new database operation like `db.get()` and an `unref()` method to be called when all operations have finished (or when the database is closed). A Node.js `net` socket satisfies that interface. The `ref` option is not relevant when `ManyLevelGuest` is used in a browser environment (which, side note, is not officially supported yet).
 
 #### `guestStream = db.connect()`
 
@@ -140,6 +140,8 @@ With [npm](https://npmjs.org) do:
 ```
 npm i many-level
 ```
+
+Usage from TypeScript also requires `npm install @types/readable-stream`.
 
 ## Contributing
 
