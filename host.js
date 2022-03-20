@@ -134,7 +134,7 @@ function createRpcStream (db, options, streamOptions) {
 
     function onput (req) {
       preput(req.key, req.value, function (err) {
-        if (err) return callback(err)
+        if (err) return callback(req.id, err)
         db.put(req.key, req.value, encodingOptions, function (err) {
           callback(req.id, err, null)
         })
@@ -155,7 +155,7 @@ function createRpcStream (db, options, streamOptions) {
 
     function ondel (req) {
       predel(req.key, function (err) {
-        if (err) return callback(err)
+        if (err) return callback(req.id, err)
         db.del(req.key, encodingOptions, function (err) {
           callback(req.id, err)
         })
@@ -168,7 +168,7 @@ function createRpcStream (db, options, streamOptions) {
 
     function onbatch (req) {
       prebatch(req.ops, function (err) {
-        if (err) return callback(err)
+        if (err) return callback(req.id, err)
 
         db.batch(req.ops, encodingOptions, function (err) {
           callback(req.id, err)
