@@ -80,7 +80,7 @@ The error codes are also used in communication between host and guest, instead o
 All together, here are the errors to be expected from `many-level`:
 
 | Message                     | Code                                                 |
-|:----------------------------|:-----------------------------------------------------|
+| :-------------------------- | :--------------------------------------------------- |
 | `Connection to leader lost` | `LEVEL_CONNECTION_LOST` or `LEVEL_DATABASE_NOT_OPEN` |
 | `Database is readonly`      | `LEVEL_READONLY`                                     |
 | Any other message           | `LEVEL_REMOTE_ERROR` or an `abstract-level` code     |

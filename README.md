@@ -1,6 +1,6 @@
 # many-level
 
-**Expose an [abstract-level](https://github.com/Level/abstract-level) database over the network or other kind of stream.** The successor to [`multileveldown`](https://github.com/Level/multileveldown). If you are upgrading, please see [UPGRADING.md](UPGRADING.md).
+**Share an [abstract-level](https://github.com/Level/abstract-level) database over the network or other kind of stream.** The successor to [`multileveldown`](https://github.com/Level/multileveldown). If you are upgrading, please see [UPGRADING.md](UPGRADING.md).
 
 > :pushpin: Which module should I use? What is `abstract-level`? Head over to the [FAQ](https://github.com/Level/community#faq).
 
@@ -8,16 +8,16 @@
 [![npm](https://img.shields.io/npm/v/many-level.svg)](https://www.npmjs.com/package/many-level)
 [![Node version](https://img.shields.io/node/v/many-level.svg)](https://www.npmjs.com/package/many-level)
 [![Test](https://img.shields.io/github/workflow/status/Level/many-level/Test?label=test)](https://github.com/Level/many-level/actions/workflows/test.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/Level/many-level?label=&logo=codecov&logoColor=fff)](https://codecov.io/gh/Level/many-level)
-[![Standard](https://img.shields.io/badge/standard-informational?logo=javascript&logoColor=fff)](https://standardjs.com)
+[![Coverage](https://img.shields.io/codecov/c/github/Level/many-level?label=\&logo=codecov\&logoColor=fff)](https://codecov.io/gh/Level/many-level)
+[![Standard](https://img.shields.io/badge/standard-informational?logo=javascript\&logoColor=fff)](https://standardjs.com)
 [![Common Changelog](https://common-changelog.org/badge.svg)](https://common-changelog.org)
-[![Donate](https://img.shields.io/badge/donate-orange?logo=open-collective&logoColor=fff)](https://opencollective.com/level)
+[![Donate](https://img.shields.io/badge/donate-orange?logo=open-collective\&logoColor=fff)](https://opencollective.com/level)
 
 ## Usage
 
-Similar to [`multilevel`](https://github.com/juliangruber/multilevel) you can use this to share an `abstract-level` database across multiple processes over a stream. In addition `many-level` supports seamless retry so you can reconnect to a server without your read streams / puts failing etc.
+Use this module to share an `abstract-level` database across multiple processes or machines. A _host_ exposes a database of choice over binary streams, using compact [Protocol Buffers](https://developers.google.com/protocol-buffers) messages to encode database operations. One or more _guests_ connect to that host and expose it as an `abstract-level` database, as if it is a regular, local database. They support an opt-in seamless retry in order to reconnect to a host without aborting any pending database operations.
 
-First create a server (can be anything that supports binary streams):
+First create a host and server. The server can be anything that supports binary streams. In this example we'll use a simple TCP server.
 
 ```js
 const { ManyLevelHost } = require('many-level')
@@ -38,7 +38,7 @@ const server = createServer(function (socket) {
 server.listen(9000)
 ```
 
-Then create some clients:
+Then create some guests:
 
 ```js
 const { ManyLevelGuest } = require('many-level')
@@ -64,10 +64,6 @@ Encoding options are supported as usual.
 To setup reconnect set the `retry` option to `true` and reconnect to your server when the connection fails:
 
 ```js
-const { ManyLevelGuest } = require('many-level')
-const { pipeline } = require('readable-stream')
-const { connect } = require('net')
-
 const db = new ManyLevelGuest({
   retry: true
 })
@@ -84,7 +80,7 @@ const reconnect = function () {
 reconnect()
 ```
 
-`many-level` will now make sure to retry your pending operations when you reconnect. If you create a read stream and your connection fails half way through reading that stream `many-level` makes sure to only retry the part of the stream you are missing. Please note that this might not guarantee leveldb snapshotting if you rely on that.
+The guest database will now retry your pending operations when you reconnect. If you create an iterator or [readable stream](https://github.com/Level/read-stream) and your connection fails halfway through reading that iterator then `many-level` makes sure to only retry the part of the iterator that you are missing. The downside of `retry` is that a guest database then cannot provide [snapshot guarantees](https://github.com/Level/abstract-level#iterator) because new iterators (and thus snapshots of the host database) will be created upon reconnect. This is reflected in [`db.supports.snapshots`](https://github.com/Level/abstract-level#dbsupports) which will be `false` if `retry` is true.
 
 ## API
 
@@ -92,48 +88,50 @@ reconnect()
 
 #### `host = new ManyLevelHost(db, [options])`
 
-Create a new host that exposes `db` to clients. The `db` argument must be an `abstract-level` database that supports the `'buffer'` encoding (most if not all do). It can also be a sublevel (because `db.sublevel()` itself returns an `abstract-level` database) which allows for exposing a specific section of the database.
+Create a new host that exposes the given `db`, which must be an `abstract-level` database that supports the `'buffer'` encoding (most if not all do). It can also be a [sublevel](https://github.com/Level/abstract-level#sublevel--dbsublevelname-options) which allows for exposing only a specific section of the database.
 
 The optional `options` object may contain:
 
-```js
-{
-  readonly: true, // make the database be accessible as read only
-  preput: function (key, val, cb) {}, // called before puts
-  predel: function (key, cb) {}, // called before dels
-  prebatch: function (batch, cb) {} // called before batches
-}
-```
+- `readonly` (boolean, default `false`): reject write operations like `db.put()`
+- `preput` (function, default none): `function (key, val, cb) {}` called before puts
+- `predel` (function, default none): `function (key, cb) {}` called before dels
+- `prebatch` (function, default none): `function (batch, cb) {}` called before batches.
 
 #### `hostStream = host.createRpcStream()`
 
-Create a duplex host stream to be piped into a guest stream.
+Create a duplex host stream to be piped into a guest stream. One per guest.
 
 ### Guest
 
 #### `db = new ManyLevelGuest([options])`
 
-Create a guest database that reads and writes to the host's database. The `ManyLevelGuest` class extends `AbstractLevel` and thus follows the public API of [abstract-level](https://github.com/Level/abstract-level). It opens itself, but unlike other `abstract-level` implementations, cannot be re-opened once `db.close()` has been called.
+Create a guest database that reads and writes to the host's database. The `ManyLevelGuest` class extends `AbstractLevel` and thus follows the public API of [`abstract-level`](https://github.com/Level/abstract-level) with a few additional methods and one additional constructor option. As such, the majority of the API is documented in `abstract-level`. It supports sublevels, `iterator.seek()` and every other `abstract-level` feature, except for the `createIfMissing` and `errorIfExists` options which have no effect here. Iterators have built-in end-to-end backpressure regardless of the transport that you use.
 
 The optional `options` object may contain:
 
-- `keyEncoding` (string or object, default `'utf8'`): encoding to use for keys
+- `keyEncoding` (string or object, default `'utf8'`): [encoding](https://github.com/Level/abstract-level#encodings) to use for keys
 - `valueEncoding` (string or object, default `'utf8'`): encoding to use for values
 - `retry` (boolean, default `false`): if true, resend operations when reconnected. If false, abort operations when disconnected, which means to yield an error on e.g. `db.get()`.
 
-See [Encodings](https://github.com/Level/abstract-level#encodings) for a full description of the encoding options.
+The database opens itself but (unlike other `abstract-level` implementations) cannot be re-opened once `db.close()` has been called. Calling `db.open()` would then yield a [`LEVEL_NOT_SUPPORTED`](https://github.com/Level/abstract-level#errors) error.
 
 #### `guestStream = db.createRpcStream([options])`
 
-Create a duplex guest stream to be piped into a host stream. Will throw if `createRpcStream()` was previously called and that stream has not closed. The optional `options` object may contain:
+Create a duplex guest stream to be piped into a host stream. Until that's done, operations made on `db` are queued up in memory. Will throw if `createRpcStream()` was previously called and that stream has not (yet) closed. The optional `options` object may contain:
 
 - `ref` (object, default `null`): an object to only keep the Node.js event loop alive while there are pending database operations. Should have a `ref()` method to be called on a new operation like `db.get()` and an `unref()` method to be called when all operations have finished (or when the database is closed). A Node.js `net` socket satisfies that interface. The `ref` option is not relevant when `ManyLevelGuest` is used in a browser environment.
-
-Until this stream has been piped into a (connected) stream, operations made on `db` are queued up in memory.
 
 #### `guestStream = db.connect()`
 
 An alias to `createRpcStream()` for [`multileveldown`](https://github.com/Level/multileveldown) API compatibility.
+
+#### `db.forward(db2)`
+
+Instead of talking to a host, forward all database operations to `db2` which must be an `abstract-level` database. This method is used by `rave-level` and serves a narrow use case. Which is to say, it may not work for anything other than `rave-level`. Among other things, it assumes that `db2` is open and that it uses the same encoding options as the guest database.
+
+#### `db.isFlushed()`
+
+Returns `true` if there are no operations pending to be sent to a host.
 
 ## Install
 

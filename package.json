@@ -1,7 +1,7 @@
 {
   "name": "many-level",
   "version": "0.0.0",
-  "description": "Expose an abstract-level database over the network or other kind of stream",
+  "description": "Share an abstract-level database over the network or other kind of stream",
   "author": "Mathias Buus (@mafintosh)",
   "license": "MIT",
   "main": "index.js",
