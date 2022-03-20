@@ -4,23 +4,27 @@ const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
-const manylevel = require('../')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 
 tape('two concurrent iterators', function (t) {
   const db = new MemoryLevel()
-  const server = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  server.pipe(client.connect()).pipe(server)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   const batch = []
-  for (let i = 0; i < 100; i++) batch.push({ type: 'put', key: 'key-' + i, value: 'value-' + i })
 
-  client.batch(batch, function (err) {
+  for (let i = 0; i < 100; i++) {
+    batch.push({ type: 'put', key: 'key-' + i, value: 'value-' + i })
+  }
+
+  guest.batch(batch, function (err) {
     t.error(err)
 
-    const rs1 = new EntryStream(client)
-    const rs2 = new EntryStream(client)
+    const rs1 = new EntryStream(guest)
+    const rs2 = new EntryStream(guest)
 
     rs1.pipe(concat(function (list1) {
       t.same(list1.length, 100)
@@ -32,24 +36,25 @@ tape('two concurrent iterators', function (t) {
   })
 })
 
-tape('two concurrent clients', function (t) {
+tape('two concurrent guests', function (t) {
   const db = new MemoryLevel()
-  const server1 = manylevel.server(db)
-  const server2 = manylevel.server(db)
-  const client1 = manylevel.client()
-  const client2 = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream1 = host.createRpcStream()
+  const stream2 = host.createRpcStream()
+  const guest1 = new ManyLevelGuest()
+  const guest2 = new ManyLevelGuest()
 
-  server1.pipe(client1.connect()).pipe(server1)
-  server2.pipe(client2.connect()).pipe(server2)
+  stream1.pipe(guest1.createRpcStream()).pipe(stream1)
+  stream2.pipe(guest2.createRpcStream()).pipe(stream2)
 
   const batch = []
   for (let i = 0; i < 100; i++) batch.push({ type: 'put', key: 'key-' + i, value: 'value-' + i })
 
-  client1.batch(batch, function (err) {
+  guest1.batch(batch, function (err) {
     t.error(err)
 
-    const rs1 = new EntryStream(client1)
-    const rs2 = new EntryStream(client2)
+    const rs1 = new EntryStream(guest1)
+    const rs2 = new EntryStream(guest2)
 
     rs1.pipe(concat(function (list1) {
       t.same(list1.length, 100)

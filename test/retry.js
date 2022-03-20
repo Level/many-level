@@ -4,42 +4,44 @@ const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const { pipeline } = require('readable-stream')
-const manylevel = require('../')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 
 tape('retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ retry: true })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ retry: true })
 
   db.put('hello', 'world', function () {
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, 'world')
       t.end()
     })
 
-    stream.pipe(client.connect()).pipe(stream)
+    stream.pipe(guest.createRpcStream()).pipe(stream)
   })
 })
 
 tape('no retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ retry: false })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ retry: false })
 
-  client.open(function () {
+  guest.open(function () {
     db.put('hello', 'world', function () {
-      client.get('hello', function (err, value) {
+      guest.get('hello', function (err, value) {
         t.ok(err, 'had error')
         t.end()
       })
 
-      const rpc = client.connect()
+      const rpc = guest.createRpcStream()
       stream.pipe(rpc).pipe(stream)
       rpc.destroy()
 
       setTimeout(function () {
-        const rpc = client.connect()
+        const rpc = guest.createRpcStream()
         stream.pipe(rpc).pipe(stream)
       }, 100)
     })
@@ -48,23 +50,24 @@ tape('no retry get', function (t) {
 
 tape('retry get', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ retry: true })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ retry: true })
 
-  client.open(function () {
+  guest.open(function () {
     db.put('hello', 'world', function () {
-      client.get('hello', function (err, value) {
+      guest.get('hello', function (err, value) {
         t.error(err, 'no err')
         t.same(value, 'world')
         t.end()
       })
 
-      const rpc = client.connect()
+      const rpc = guest.createRpcStream()
       stream.pipe(rpc).pipe(stream)
       rpc.destroy()
 
       setTimeout(function () {
-        const rpc = client.connect()
+        const rpc = guest.createRpcStream()
         stream.pipe(rpc).pipe(stream)
       }, 100)
     })
@@ -74,9 +77,10 @@ tape('retry get', function (t) {
 for (const reverse of [false, true]) {
   tape(`retry iterator with gte (reverse: ${reverse})`, async function (t) {
     const db = new MemoryLevel()
+    const host = new ManyLevelHost(db)
     const entryCount = 1e4
     const padding = 5
-    const client = manylevel.client({ retry: true })
+    const guest = new ManyLevelGuest({ retry: true })
 
     let done = false
     let attempts = 0
@@ -87,7 +91,7 @@ for (const reverse of [false, true]) {
     }))
 
     // Don't test deferredOpen
-    await client.open()
+    await guest.open()
 
     // Artificially slow down iterators
     const original = db._iterator
@@ -112,8 +116,8 @@ for (const reverse of [false, true]) {
 
       attempts++
 
-      const remote = manylevel.server(db)
-      const local = client.connect()
+      const remote = host.createRpcStream()
+      const local = guest.createRpcStream()
 
       // TODO: calls back too soon if you destroy remote instead of local,
       // because duplexify does not satisfy node's willEmitClose() check
@@ -121,7 +125,7 @@ for (const reverse of [false, true]) {
       setTimeout(local.destroy.bind(local), 50)
     })()
 
-    const entries = await client.iterator({ gte: '1'.padStart(padding, '0'), reverse }).all()
+    const entries = await guest.iterator({ gte: '1'.padStart(padding, '0'), reverse }).all()
     done = true
 
     t.is(entries.length, entryCount - 1)
@@ -134,7 +138,8 @@ for (const reverse of [false, true]) {
 for (const reverse of [false, true]) {
   tape(`retry iterator with bytes (reverse: ${reverse})`, async function (t) {
     const db = new MemoryLevel()
-    const client = manylevel.client({
+    const host = new ManyLevelHost(db)
+    const guest = new ManyLevelGuest({
       retry: true,
       keyEncoding: 'buffer'
     })
@@ -162,21 +167,21 @@ for (const reverse of [false, true]) {
     }))
 
     // Don't test deferredOpen
-    await client.open()
+    await guest.open()
 
     ;(function connect () {
       if (done) return
       attempts++
-      const remote = manylevel.server(db)
-      local = client.connect()
+      const remote = host.createRpcStream()
+      local = guest.createRpcStream()
       pipeline(remote, local, remote, connect)
     })()
 
     // Wait for first connection
-    await client.get(Buffer.alloc(0))
+    await guest.get(Buffer.alloc(0))
 
     const result = []
-    const it = client.keys({ reverse })
+    const it = guest.keys({ reverse })
 
     while (true) {
       local.destroy()
@@ -196,7 +201,8 @@ for (const reverse of [false, true]) {
 
 tape('retry value iterator', async function (t) {
   const db = new MemoryLevel()
-  const client = manylevel.client({ retry: true, valueEncoding: 'json' })
+  const host = new ManyLevelHost(db)
+  const guest = new ManyLevelGuest({ retry: true, valueEncoding: 'json' })
   const keys = ['a', 'b', 'c', 'd']
 
   let done = false
@@ -210,16 +216,16 @@ tape('retry value iterator', async function (t) {
   ;(function connect () {
     if (done) return
     attempts++
-    const remote = manylevel.server(db)
-    local = client.connect()
+    const remote = host.createRpcStream()
+    local = guest.createRpcStream()
     pipeline(remote, local, remote, connect)
   })()
 
   // Wait for first connection
-  await client.get('a')
+  await guest.get('a')
 
   const result = []
-  const it = client.values()
+  const it = guest.values()
 
   while (true) {
     local.destroy()
@@ -239,7 +245,8 @@ tape('retry value iterator', async function (t) {
 for (const reverse of [false, true]) {
   tape(`retry iterator with a seek() that skips keys (reverse: ${reverse})`, async function (t) {
     const db = new MemoryLevel()
-    const client = manylevel.client({ retry: true })
+    const host = new ManyLevelHost(db)
+    const guest = new ManyLevelGuest({ retry: true })
 
     let done = false
     let attempts = 0
@@ -250,18 +257,18 @@ for (const reverse of [false, true]) {
     }))
 
     // Don't test deferredOpen
-    await client.open()
+    await guest.open()
 
     ;(function connect () {
       if (done) return
       attempts++
-      const remote = manylevel.server(db)
-      local = client.connect()
+      const remote = host.createRpcStream()
+      local = guest.createRpcStream()
       pipeline(remote, local, remote, connect)
     })()
 
     const result = []
-    const it = client.keys({ reverse })
+    const it = guest.keys({ reverse })
 
     while (true) {
       let key = await it.next()
@@ -284,7 +291,8 @@ for (const reverse of [false, true]) {
 for (const reverse of [false, true]) {
   tape(`retry iterator with a seek() that revisits keys (reverse: ${reverse})`, async function (t) {
     const db = new MemoryLevel()
-    const client = manylevel.client({ retry: true })
+    const host = new ManyLevelHost(db)
+    const guest = new ManyLevelGuest({ retry: true })
 
     let done = false
     let attempts = 0
@@ -296,18 +304,18 @@ for (const reverse of [false, true]) {
     }))
 
     // Don't test deferredOpen
-    await client.open()
+    await guest.open()
 
     ;(function connect () {
       if (done) return
       attempts++
-      const remote = manylevel.server(db)
-      local = client.connect()
+      const remote = host.createRpcStream()
+      local = guest.createRpcStream()
       pipeline(remote, local, remote, connect)
     })()
 
     const result = []
-    const it = client.keys({ reverse })
+    const it = guest.keys({ reverse })
 
     while (true) {
       let key = await it.next()
@@ -341,9 +349,10 @@ for (const reverse of [false, true]) {
 
 tape('retry read stream', function (t) {
   const db = new MemoryLevel()
-  const client = manylevel.client({ retry: true })
+  const host = new ManyLevelHost(db)
+  const guest = new ManyLevelGuest({ retry: true })
 
-  client.open(function () {
+  guest.open(function () {
     db.batch([{
       type: 'put',
       key: 'hej',
@@ -357,7 +366,7 @@ tape('retry read stream', function (t) {
       key: 'hola',
       value: 'mundo'
     }], function () {
-      const rs = new EntryStream(client)
+      const rs = new EntryStream(guest)
       const expected = [{
         key: 'hej',
         value: 'verden'
@@ -379,12 +388,12 @@ tape('retry read stream', function (t) {
       })
 
       let stream
-      let clientStream
+      let guestStream
 
       const connect = function () {
-        stream = manylevel.server(db)
-        clientStream = client.connect()
-        stream.pipe(clientStream).pipe(stream)
+        stream = host.createRpcStream()
+        guestStream = guest.createRpcStream()
+        stream.pipe(guestStream).pipe(stream)
       }
 
       connect()
@@ -394,9 +403,10 @@ tape('retry read stream', function (t) {
 
 tape('retry read stream and limit', function (t) {
   const db = new MemoryLevel()
-  const client = manylevel.client({ retry: true })
+  const host = new ManyLevelHost(db)
+  const guest = new ManyLevelGuest({ retry: true })
 
-  client.open(function () {
+  guest.open(function () {
     db.batch([{
       type: 'put',
       key: 'hej',
@@ -410,7 +420,7 @@ tape('retry read stream and limit', function (t) {
       key: 'hola',
       value: 'mundo'
     }], function () {
-      const rs = new EntryStream(client, { limit: 2 })
+      const rs = new EntryStream(guest, { limit: 2 })
       const expected = [{
         key: 'hej',
         value: 'verden'
@@ -429,12 +439,12 @@ tape('retry read stream and limit', function (t) {
       })
 
       let stream
-      let clientStream
+      let guestStream
 
       const connect = function () {
-        stream = manylevel.server(db)
-        clientStream = client.connect()
-        stream.pipe(clientStream).pipe(stream)
+        stream = host.createRpcStream()
+        guestStream = guest.createRpcStream()
+        stream.pipe(guestStream).pipe(stream)
       }
 
       connect()

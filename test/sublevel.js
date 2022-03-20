@@ -1,24 +1,23 @@
 'use strict'
 
-// TODO: rename file
-
 const tape = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const concat = require('concat-stream')
-const manylevel = require('../')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 
-tape('sublevel on deferred many-level client', function (t) {
+tape('sublevel on deferred many-level guest', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
-  const sub1 = client.sublevel('test', { valueEncoding: 'json' })
-  const sub2 = client.sublevel('test')
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
+  const sub1 = guest.sublevel('test', { valueEncoding: 'json' })
+  const sub2 = guest.sublevel('test')
 
-  t.is(client.status, 'opening')
-  stream.pipe(client.connect()).pipe(stream)
+  t.is(guest.status, 'opening')
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   sub1.put('hello', { test: 'world' }, function (err) {
     t.error(err, 'no err')
@@ -38,20 +37,21 @@ tape('sublevel on deferred many-level client', function (t) {
   })
 })
 
-tape('sublevel on non-deferred many-level client', function (t) {
+tape('sublevel on non-deferred many-level guest', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.once('open', function () {
-    t.is(client.status, 'open')
+  guest.once('open', function () {
+    t.is(guest.status, 'open')
 
-    const sub1 = client.sublevel('test', { valueEncoding: 'json' })
-    const sub2 = client.sublevel('test')
+    const sub1 = guest.sublevel('test', { valueEncoding: 'json' })
+    const sub2 = guest.sublevel('test')
 
     sub1.put('hello', { test: 'world' }, function (err) {
       t.error(err, 'no err')
@@ -72,39 +72,39 @@ tape('sublevel on non-deferred many-level client', function (t) {
   })
 })
 
-tape('many-level server on deferred sublevel', function (t) {
+tape('many-level host on deferred sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
   const sub1 = db.sublevel('test1')
   const sub2 = db.sublevel('test2')
-  const stream = manylevel.server(sub1)
-  const client = manylevel.client()
+  const stream = new ManyLevelHost(sub1).createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('from', 'client', function (err) {
+  guest.put('from', 'guest', function (err) {
     t.error(err, 'no err')
 
-    sub2.put('from', 'server', function (err) {
+    sub2.put('from', 'host', function (err) {
       t.error(err, 'no err')
 
       // TODO: use iterator.all() instead
-      new EntryStream(client).pipe(concat(function (entries) {
-        t.same(entries, [{ key: 'from', value: 'client' }])
+      new EntryStream(guest).pipe(concat(function (entries) {
+        t.same(entries, [{ key: 'from', value: 'guest' }])
       }))
 
       new EntryStream(db).pipe(concat(function (entries) {
         t.same(entries, [
-          { key: '!test1!from', value: 'client' },
-          { key: '!test2!from', value: 'server' }
+          { key: '!test1!from', value: 'guest' },
+          { key: '!test2!from', value: 'host' }
         ])
       }))
     })
   })
 })
 
-tape('many-level server on non-deferred sublevel', function (t) {
+tape('many-level host on non-deferred sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
@@ -112,26 +112,26 @@ tape('many-level server on non-deferred sublevel', function (t) {
   const sub2 = db.sublevel('test2')
 
   sub1.once('open', function () {
-    const stream = manylevel.server(sub1)
-    const client = manylevel.client()
+    const stream = new ManyLevelHost(sub1).createRpcStream()
+    const guest = new ManyLevelGuest()
 
-    stream.pipe(client.connect()).pipe(stream)
+    stream.pipe(guest.createRpcStream()).pipe(stream)
 
-    client.put('from', 'client', function (err) {
+    guest.put('from', 'guest', function (err) {
       t.error(err, 'no err')
 
-      sub2.put('from', 'server', function (err) {
+      sub2.put('from', 'host', function (err) {
         t.error(err, 'no err')
 
         // TODO: use iterator.all() instead
-        new EntryStream(client).pipe(concat(function (entries) {
-          t.same(entries, [{ key: 'from', value: 'client' }])
+        new EntryStream(guest).pipe(concat(function (entries) {
+          t.same(entries, [{ key: 'from', value: 'guest' }])
         }))
 
         new EntryStream(db).pipe(concat(function (entries) {
           t.same(entries, [
-            { key: '!test1!from', value: 'client' },
-            { key: '!test2!from', value: 'server' }
+            { key: '!test1!from', value: 'guest' },
+            { key: '!test2!from', value: 'host' }
           ])
         }))
       })
@@ -139,33 +139,33 @@ tape('many-level server on non-deferred sublevel', function (t) {
   })
 })
 
-tape('many-level server on nested sublevel', function (t) {
+tape('many-level host on nested sublevel', function (t) {
   t.plan(4)
 
   const db = new MemoryLevel()
   const sub1 = db.sublevel('test1')
   const sub2 = sub1.sublevel('test2')
   const sub3 = db.sublevel('test3')
-  const stream = manylevel.server(sub2)
-  const client = manylevel.client()
+  const stream = new ManyLevelHost(sub2).createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('from', 'client', function (err) {
+  guest.put('from', 'guest', function (err) {
     t.error(err, 'no err')
 
-    sub3.put('from', 'server', function (err) {
+    sub3.put('from', 'host', function (err) {
       t.error(err, 'no err')
 
       // TODO: use iterator.all() instead
-      new EntryStream(client).pipe(concat(function (entries) {
-        t.same(entries, [{ key: 'from', value: 'client' }])
+      new EntryStream(guest).pipe(concat(function (entries) {
+        t.same(entries, [{ key: 'from', value: 'guest' }])
       }))
 
       new EntryStream(db).pipe(concat(function (entries) {
         t.same(entries, [
-          { key: '!test1!!test2!from', value: 'client' },
-          { key: '!test3!from', value: 'server' }
+          { key: '!test1!!test2!from', value: 'guest' },
+          { key: '!test3!from', value: 'host' }
         ])
       }))
     })

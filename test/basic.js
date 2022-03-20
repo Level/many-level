@@ -5,31 +5,32 @@ const { MemoryLevel } = require('memory-level')
 const { EntryStream } = require('level-read-stream')
 const { pipeline } = require('readable-stream')
 const concat = require('concat-stream')
-const manylevel = require('../')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 
 tape('get', function (t) {
   t.plan(7)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   db.put('hello', 'world', function (err) {
     t.error(err, 'no err')
 
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, 'world')
     })
 
-    client.get(Buffer.from('hello'), function (err, value) {
+    guest.get(Buffer.from('hello'), function (err, value) {
       t.error(err, 'no err')
       t.same(value, 'world')
     })
 
-    client.get('hello', { valueEncoding: 'buffer' }, function (err, value) {
+    guest.get('hello', { valueEncoding: 'buffer' }, function (err, value) {
       t.error(err, 'no err')
       t.same(value, Buffer.from('world'))
     })
@@ -38,13 +39,14 @@ tape('get', function (t) {
 
 tape('get with valueEncoding: json in constructor', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ valueEncoding: 'json' })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ valueEncoding: 'json' })
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   db.put('hello', '{"foo":"world"}', function () {
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, { foo: 'world' })
       t.end()
@@ -56,20 +58,21 @@ tape('get with valueEncoding: json in get options', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   db.put('hello', '{"foo":"world"}', function (err) {
     t.error(err, 'no err')
 
-    client.get('hello', { valueEncoding: 'json' }, function (err, value) {
+    guest.get('hello', { valueEncoding: 'json' }, function (err, value) {
       t.error(err, 'no err')
       t.same(value, { foo: 'world' })
     })
 
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, '{"foo":"world"}')
     })
@@ -78,14 +81,15 @@ tape('get with valueEncoding: json in get options', function (t) {
 
 tape('put', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('hello', 'world', function (err) {
+  guest.put('hello', 'world', function (err) {
     t.error(err, 'no err')
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, 'world')
       t.end()
@@ -97,12 +101,13 @@ tape('put with valueEncoding: json in constructor', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ valueEncoding: 'json' })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ valueEncoding: 'json' })
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('hello', { foo: 'world' }, function (err) {
+  guest.put('hello', { foo: 'world' }, function (err) {
     t.error(err, 'no err')
 
     db.get('hello', function (err, value) {
@@ -110,7 +115,7 @@ tape('put with valueEncoding: json in constructor', function (t) {
       t.same(value, '{"foo":"world"}')
     })
 
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, { foo: 'world' })
     })
@@ -121,12 +126,13 @@ tape('put with valueEncoding: json in put options', function (t) {
   t.plan(5)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('hello', { foo: 'world' }, { valueEncoding: 'json' }, function (err) {
+  guest.put('hello', { foo: 'world' }, { valueEncoding: 'json' }, function (err) {
     t.error(err, 'no err')
 
     db.get('hello', function (err, value) {
@@ -134,7 +140,7 @@ tape('put with valueEncoding: json in put options', function (t) {
       t.same(value, '{"foo":"world"}')
     })
 
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, '{"foo":"world"}')
     })
@@ -145,34 +151,36 @@ tape('readonly', async function (t) {
   t.plan(2)
 
   const db = new MemoryLevel()
+  const host = new ManyLevelHost(db, { readonly: true })
   await db.put('hello', 'verden')
 
-  const stream = manylevel.server(db, { readonly: true })
-  const client = manylevel.client()
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
   try {
-    await client.put('hello', 'world')
+    await guest.put('hello', 'world')
   } catch (err) {
     t.is(err && err.code, 'LEVEL_READONLY')
   }
 
-  t.is(await client.get('hello'), 'verden', 'old value')
+  t.is(await guest.get('hello'), 'verden', 'old value')
 })
 
 tape('del', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.put('hello', 'world', function (err) {
+  guest.put('hello', 'world', function (err) {
     t.error(err, 'no err')
-    client.del('hello', function (err) {
+    guest.del('hello', function (err) {
       t.error(err, 'no err')
-      client.get('hello', function (err) {
+      guest.get('hello', function (err) {
         t.is(err && err.code, 'LEVEL_NOT_FOUND')
         t.end()
       })
@@ -182,17 +190,18 @@ tape('del', function (t) {
 
 tape('batch', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
+  guest.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
     t.error(err, 'no err')
-    client.get('hello', function (err, value) {
+    guest.get('hello', function (err, value) {
       t.error(err, 'no err')
       t.same(value, 'world')
-      client.get('hej', function (err, value) {
+      guest.get('hej', function (err, value) {
         t.error(err, 'no err')
         t.same(value, 'verden')
         t.end()
@@ -203,14 +212,15 @@ tape('batch', function (t) {
 
 tape('read stream', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
+  guest.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
     t.error(err, 'no err')
-    const rs = new EntryStream(client)
+    const rs = new EntryStream(guest)
     rs.pipe(concat(function (entries) {
       t.same(entries.length, 2)
       t.same(entries[0], { key: 'hej', value: 'verden' })
@@ -222,14 +232,15 @@ tape('read stream', function (t) {
 
 tape('read stream (gt)', function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
+  guest.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], function (err) {
     t.error(err, 'no err')
-    const rs = new EntryStream(client, { gt: 'hej' })
+    const rs = new EntryStream(guest, { gt: 'hej' })
     rs.pipe(concat(function (entries) {
       t.same(entries.length, 1)
       t.same(entries[0], { key: 'hello', value: 'world' })
@@ -238,63 +249,61 @@ tape('read stream (gt)', function (t) {
   })
 })
 
-tape('for await...of iterator', function (t) {
+tape('for await...of iterator', async function (t) {
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client()
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest()
 
-  stream.pipe(client.connect()).pipe(stream)
+  stream.pipe(guest.createRpcStream()).pipe(stream)
 
-  client.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }], async function (err) {
-    t.error(err, 'no err')
+  await guest.batch([{ type: 'put', key: 'hello', value: 'world' }, { type: 'put', key: 'hej', value: 'verden' }])
+  const entries = []
 
-    const entries = []
+  for await (const [key, value] of guest.iterator()) {
+    entries.push([key, value])
+  }
 
-    for await (const [key, value] of client.iterator()) {
-      entries.push([key, value])
-    }
-
-    t.same(entries, [['hej', 'verden'], ['hello', 'world']])
-    t.end()
-  })
+  t.same(entries, [['hej', 'verden'], ['hello', 'world']])
 })
 
 tape('close with pending request', function (t) {
   t.plan(2)
 
-  const client = manylevel.client()
+  const guest = new ManyLevelGuest()
 
-  client.put('hello', 'world', function (err) {
+  guest.put('hello', 'world', function (err) {
     t.is(err && err.code, 'LEVEL_DATABASE_NOT_OPEN')
 
-    client.put('hello', 'world', function (err) {
+    guest.put('hello', 'world', function (err) {
       t.is(err && err.code, 'LEVEL_DATABASE_NOT_OPEN')
     })
   })
 
-  client.close()
+  guest.close()
 })
 
 tape('disconnect with pending request', function (t) {
   t.plan(3)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ retry: false })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ retry: false })
 
-  pipeline(stream, client.connect(), stream, () => {})
+  pipeline(stream, guest.createRpcStream(), stream, () => {})
 
   db.open(function (err) {
     t.ifError(err)
 
-    client.open(function (err) {
+    guest.open(function (err) {
       t.ifError(err)
 
-      client.put('hello', 'world', function (err) {
+      guest.put('hello', 'world', function (err) {
         t.is(err && err.code, 'LEVEL_CONNECTION_LOST')
 
         // TODO: what are we expecting here?
-        // client.put('hello', 'world', function (err) {
+        // guest.put('hello', 'world', function (err) {
         //   t.is(err && err.code, ?)
         // })
       })
@@ -307,12 +316,12 @@ tape('disconnect with pending request', function (t) {
 tape('close with pending iterator', function (t) {
   t.plan(3)
 
-  const client = manylevel.client()
+  const guest = new ManyLevelGuest()
 
-  client.open(function (err) {
+  guest.open(function (err) {
     t.ifError(err)
 
-    const it = client.iterator()
+    const it = guest.iterator()
 
     it.next(function (err) {
       t.is(err && err.code, 'LEVEL_ITERATOR_NOT_OPEN')
@@ -322,7 +331,7 @@ tape('close with pending iterator', function (t) {
       })
     })
 
-    client.close()
+    guest.close()
   })
 })
 
@@ -330,22 +339,23 @@ tape('disconnect with pending iterator', function (t) {
   t.plan(3)
 
   const db = new MemoryLevel()
-  const stream = manylevel.server(db)
-  const client = manylevel.client({ retry: false })
+  const host = new ManyLevelHost(db)
+  const stream = host.createRpcStream()
+  const guest = new ManyLevelGuest({ retry: false })
 
-  pipeline(stream, client.connect(), stream, () => {})
+  pipeline(stream, guest.createRpcStream(), stream, () => {})
 
   db.open(function (err) {
     t.ifError(err)
 
-    client.open(function (err) {
+    guest.open(function (err) {
       t.ifError(err)
 
-      client.iterator().next(function (err) {
+      guest.iterator().next(function (err) {
         t.is(err && err.code, 'LEVEL_CONNECTION_LOST')
 
         // TODO: what are we expecting here?
-        // client.iterator().next(function (err) {
+        // guest.iterator().next(function (err) {
         //   t.is(err && err.code, ?)
         // })
       })

@@ -3,7 +3,7 @@
 const test = require('tape')
 const { MemoryLevel } = require('memory-level')
 const { pipeline } = require('readable-stream')
-const { ManyLevelHost, ManyLevelGuest } = require('../')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 const ModuleError = require('module-error')
 
 test('iterator.next() error', async function (t) {

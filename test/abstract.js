@@ -2,18 +2,19 @@
 
 const test = require('tape')
 const { MemoryLevel } = require('memory-level')
-const manylevel = require('..')
+const { ManyLevelHost, ManyLevelGuest } = require('..')
 const suite = require('abstract-level/test')
 
 suite({
   test,
   factory (options) {
-    // Note, encoding options are set by server per operation
+    // Note, encoding options are set by host per operation
     const db = new MemoryLevel()
+    const host = new ManyLevelHost(db)
 
     // Temporary solution to allow test suite to reopen a db
-    const remote = () => manylevel.server(db)
+    const remote = () => host.createRpcStream()
 
-    return manylevel.client({ ...options, _remote: remote })
+    return new ManyLevelGuest({ ...options, _remote: remote })
   }
 })
