@@ -307,19 +307,19 @@ class ManyLevelGuest extends AbstractLevel {
   }
 
   _close (cb) {
-    if (this[kDb]) return this[kDb]._close(cb)
-
+    // Even if forward() was used, still need to abort requests made before forward().
     this[kExplicitClose] = true
     this[kAbortRequests]('Aborted on database close()', 'LEVEL_DATABASE_NOT_OPEN')
 
     if (this[kRpcStream]) {
-      // kRpcStream could be a socket and emit 'close' with a
-      // hadError argument. Ignore that argument.
-      this[kRpcStream].once('close', () => {
+      eos(this[kRpcStream], () => {
         this[kRpcStream] = null
-        cb()
+        this._close(cb)
       })
       this[kRpcStream].destroy()
+    } else if (this[kDb]) {
+      // To be safe, use close() not _close().
+      this[kDb].close(cb)
     } else {
       this.nextTick(cb)
     }
