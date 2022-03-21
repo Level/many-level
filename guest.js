@@ -3,7 +3,7 @@
 const duplexify = require('duplexify')
 const { AbstractLevel, AbstractIterator } = require('abstract-level')
 const eos = require('end-of-stream')
-const lpstream = require('length-prefixed-stream')
+const lpstream = require('./lp-stream')
 const ModuleError = require('module-error')
 const { input, output } = require('./tags')
 
