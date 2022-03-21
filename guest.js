@@ -1,11 +1,10 @@
 'use strict'
 
-const duplexify = require('duplexify')
 const { AbstractLevel, AbstractIterator } = require('abstract-level')
-const eos = require('end-of-stream')
 const lpstream = require('length-prefixed-stream')
 const ModuleError = require('module-error')
 const { input, output } = require('./tags')
+const { Duplex, pipeline, finished } = require('stream')
 
 const kExplicitClose = Symbol('explicitClose')
 const kAbortRequests = Symbol('abortRequests')
@@ -108,10 +107,8 @@ class ManyLevelGuest extends AbstractLevel {
       self[kFlushed]()
     })
 
-    const proxy = duplexify()
-    proxy.setWritable(decode)
-    proxy.setReadable(encode)
-    eos(proxy, cleanup)
+    const proxy = Duplex.from({ writable: decode, readable: encode })
+    finished(proxy, cleanup)
     this[kRpcStream] = proxy
     return proxy
 
@@ -312,7 +309,7 @@ class ManyLevelGuest extends AbstractLevel {
     this[kAbortRequests]('Aborted on database close()', 'LEVEL_DATABASE_NOT_OPEN')
 
     if (this[kRpcStream]) {
-      eos(this[kRpcStream], () => {
+      finished(this[kRpcStream], () => {
         this[kRpcStream] = null
         this._close(cb)
       })
@@ -330,7 +327,12 @@ class ManyLevelGuest extends AbstractLevel {
       // For tests only so does not need error handling
       this[kExplicitClose] = false
       const remote = this[kRemote]()
-      remote.pipe(this.connect()).pipe(remote)
+      pipeline(
+        remote,
+        this.connect(),
+        remote,
+        () => {}
+      )
     } else if (this[kExplicitClose]) {
       throw new ModuleError('Cannot reopen many-level database after close()', {
         code: 'LEVEL_NOT_SUPPORTED'
