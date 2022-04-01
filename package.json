@@ -42,7 +42,7 @@
     "level-read-stream": "^1.1.0",
     "memory-level": "^1.0.0",
     "nyc": "^15.1.0",
-    "protocol-buffers": "^4.0.2",
+    "protocol-buffers": "^5.0.0",
     "readable-stream": "^3.6.0",
     "standard": "^16.0.3",
     "tape": "^5.0.1",
