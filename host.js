@@ -1,9 +1,8 @@
 'use strict'
 
-const lpstream = require('length-prefixed-stream')
+const lpstream = require('@vweevers/length-prefixed-stream')
 const ModuleError = require('module-error')
-const eos = require('end-of-stream')
-const duplexify = require('duplexify')
+const { Duplex, finished } = require('readable-stream')
 const { input, output } = require('./tags')
 
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
@@ -60,7 +59,7 @@ function createRpcStream (db, options, streamOptions) {
   const readonly = options.readonly
   const decode = lpstream.decode()
   const encode = lpstream.encode()
-  const stream = duplexify(decode, encode)
+  const stream = Duplex.from({ writable: decode, readable: encode })
 
   const preput = options.preput
   const predel = options.predel
@@ -85,7 +84,7 @@ function createRpcStream (db, options, streamOptions) {
 
     const iterators = new Map()
 
-    eos(stream, function () {
+    finished(stream, function () {
       for (const iterator of iterators.values()) {
         iterator.close()
       }
