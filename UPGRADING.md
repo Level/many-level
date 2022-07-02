@@ -2,6 +2,10 @@
 
 This document describes breaking changes and how to upgrade. For a complete list of changes including minor and patch releases, please refer to the [changelog](CHANGELOG.md).
 
+## 2.0.0
+
+This release replaces the `duplexify` and `end-of-stream` dependencies with [`readable-stream`](https://github.com/nodejs/readable-stream) v4 and its new utilities. This means that streams exposed by `many-level` no longer emit duplexify's custom events (prefinish, preend, cork, uncork). This is unlikely to affect anyone.
+
 ## 1.0.0
 
 **Introducing `many-level`: a fork of [`multileveldown`](https://github.com/Level/multileveldown) that removes the need for [`levelup`](https://github.com/Level/levelup), [`encoding-down`](https://github.com/Level/encoding-down) and more. It implements the [`abstract-level`](https://github.com/Level/abstract-level) interface - which merged `abstract-leveldown` with `levelup`. For `many-level` that means it has the same familiar API including encodings, promises and events but excluding streams. In addition, you can now choose to use Uint8Array instead of Buffer. Sublevels are builtin.**

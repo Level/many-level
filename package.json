@@ -1,6 +1,6 @@
 {
   "name": "many-level",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Share an abstract-level database over the network or other kind of stream",
   "author": "Mathias Buus (@mafintosh)",
   "license": "MIT",
