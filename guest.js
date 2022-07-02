@@ -1,10 +1,10 @@
 'use strict'
 
 const { AbstractLevel, AbstractIterator } = require('abstract-level')
-const lpstream = require('length-prefixed-stream')
+const lpstream = require('@vweevers/length-prefixed-stream')
 const ModuleError = require('module-error')
 const { input, output } = require('./tags')
-const { Duplex, pipeline, finished } = require('stream')
+const { Duplex, pipeline, finished } = require('readable-stream')
 
 const kExplicitClose = Symbol('explicitClose')
 const kAbortRequests = Symbol('abortRequests')

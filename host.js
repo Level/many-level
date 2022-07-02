@@ -1,8 +1,8 @@
 'use strict'
 
-const lpstream = require('length-prefixed-stream')
+const lpstream = require('@vweevers/length-prefixed-stream')
 const ModuleError = require('module-error')
-const { Duplex, finished } = require('stream')
+const { Duplex, finished } = require('readable-stream')
 const { input, output } = require('./tags')
 
 const rangeOptions = new Set(['gt', 'gte', 'lt', 'lte'])
