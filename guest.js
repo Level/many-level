@@ -108,12 +108,16 @@ class ManyLevelGuest extends AbstractLevel {
     })
 
     const proxy = Duplex.from({ writable: decode, readable: encode })
-    finished(proxy, cleanup)
+
+    // Ignore the readable side so that pipeline(x, proxy, x, callback) will finish
+    finished(proxy, { writable: true, readable: false }, cleanup)
+
     this[kRpcStream] = proxy
     return proxy
 
     function cleanup () {
       self[kRpcStream] = null
+      self[kEncode].destroy()
       self[kEncode] = lpstream.encode()
 
       if (!self[kRetry]) {
