@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@types/readable-stream": "^2.3.13",
-    "@voxpelli/tsconfig": "^4.0.0",
+    "@voxpelli/tsconfig": "^6.1.0",
     "concat-stream": "^2.0.0",
     "dependency-check": "^4.1.0",
     "faucet": "^0.0.3",
